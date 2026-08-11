@@ -49,17 +49,20 @@ class LLMClient:
         self.model = models[0]["id"]
         return self.model
 
-    async def translate(self, system: str, user: str) -> str:
+    async def translate(self, system: str, user: str, max_tokens: int | None = None) -> str:
         """Run a chat completion and return the assistant's reply text."""
         endpoint = f"{self.url}/v1/chat/completions"
-        payload = {
+        payload: dict[str, object] = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
             "temperature": 0.0,
+            "chat_template_kwargs": {"enable_thinking": False},
         }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
         response = await self._client.post(
             endpoint,
             json=payload,
