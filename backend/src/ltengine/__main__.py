@@ -7,7 +7,7 @@ builds a Config, then starts a Granian ASGI server.
 from __future__ import annotations
 
 import argparse
-import sys
+import os
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -72,7 +72,6 @@ def main() -> None:
     args = parser.parse_args()
 
     from .config import Config
-    from .app import create_app
 
     config = Config(
         llm_url=args.llm_url,
@@ -85,8 +84,6 @@ def main() -> None:
         verbose=args.verbose,
     )
 
-    app = create_app(config)
-
     print(f"Starting ltengine on http://{config.host}:{config.port}")
     print(f"LLM backend: {config.llm_url}")
     if config.llm_model:
@@ -95,8 +92,28 @@ def main() -> None:
     from granian import Granian
     from granian.constants import Interfaces
 
+    # Granian spawns worker processes via `multiprocessing`. On Windows (always) and
+    # macOS (default since Python 3.8) the start method is 'spawn', not 'fork': the
+    # worker process is a fresh interpreter that must *import* its target rather than
+    # receive a pickled one, because a live Litestar app (its `lifespan` closure, etc.)
+    # is not picklable — passing `target=<app instance>` only works on 'fork' platforms,
+    # where the child inherits the parent's memory instead of unpickling. So we use
+    # Granian's documented factory-import pattern: an import-string target
+    # ("ltengine.app:app_factory") + factory=True, and hand the config to the worker via
+    # environment variables (Config.from_env(), read inside app_factory()) instead of a
+    # live object.
+    os.environ["LTENGINE_LLM_URL"] = config.llm_url
+    os.environ["LTENGINE_HOST"] = config.host
+    os.environ["LTENGINE_PORT"] = str(config.port)
+    os.environ["LTENGINE_CHAR_LIMIT"] = str(config.char_limit)
+    os.environ["LTENGINE_API_KEY"] = config.api_key
+    os.environ["LTENGINE_LLM_API_KEY"] = config.llm_api_key
+    os.environ["LTENGINE_LLM_MODEL"] = config.llm_model
+    os.environ["LTENGINE_VERBOSE"] = "1" if config.verbose else "0"
+
     Granian(
-        target=app,
+        target="ltengine.app:app_factory",
+        factory=True,
         address=config.host,
         port=config.port,
         interface=Interfaces.ASGI,

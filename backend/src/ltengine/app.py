@@ -161,6 +161,7 @@ def create_app(config: Config) -> Litestar:
         result = detect_language(q)
         return Response(
             content=[{"language": result.language.code, "confidence": result.confidence}],
+            status_code=HTTP_200_OK,
             media_type="application/json",
         )
 
@@ -273,7 +274,7 @@ def create_app(config: Config) -> Litestar:
                 "confidence": detected.confidence,
             }
 
-        return Response(content=result, media_type="application/json")
+        return Response(content=result, status_code=HTTP_200_OK, media_type="application/json")
 
     @post("/translate_file", name="translate_file")
     async def translate_file() -> Response:
@@ -358,3 +359,21 @@ def create_app(config: Config) -> Litestar:
         lifespan=[lifespan],
         debug=config.verbose,
     )
+
+
+def app_factory() -> Litestar:
+    """Zero-arg entry point Granian imports by string in each worker process.
+
+    Granian workers are spawned via `multiprocessing`; on Windows and macOS the
+    start method is 'spawn' (no fork available), so the worker re-imports this
+    module and calls this factory instead of receiving a pickled app object — a
+    live `Litestar` app built by `create_app()` holds non-picklable closures
+    (e.g. the `lifespan` context manager), so passing the instance itself across
+    the process boundary fails there (it only worked on 'fork' platforms, where
+    the child inherits memory instead of unpickling). `__main__.py` sets the
+    `LTENGINE_*` environment variables from the parsed CLI args and points
+    Granian's `target` at `"ltengine.app:app_factory"` with `factory=True`.
+    """
+    from .config import Config
+
+    return create_app(Config.from_env())
