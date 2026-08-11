@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import httpx
 
+from . import errors
+
 
 class LLMClient:
     """Async client for an OpenAI-compatible /v1/chat/completions endpoint."""
@@ -50,7 +52,13 @@ class LLMClient:
         return self.model
 
     async def translate(self, system: str, user: str, max_tokens: int | None = None) -> str:
-        """Run a chat completion and return the assistant's reply text."""
+        """Run a chat completion and return the assistant's reply text.
+
+        Raises:
+            errors.LlmError: on any upstream failure (transport, non-2xx
+                status, unparseable body, or an empty ``choices`` list) — the
+                taxonomy transcribed from ``llm_api.rs::ApiError``.
+        """
         endpoint = f"{self.url}/v1/chat/completions"
         payload: dict[str, object] = {
             "model": self.model,
@@ -63,14 +71,31 @@ class LLMClient:
         }
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
-        response = await self._client.post(
-            endpoint,
-            json=payload,
-            headers=self._auth_headers(),
-        )
-        response.raise_for_status()
-        data = response.json()
+
+        try:
+            response = await self._client.post(
+                endpoint,
+                json=payload,
+                headers=self._auth_headers(),
+            )
+        except httpx.HTTPError as exc:
+            raise errors.map_llm_failure(exc) from exc
+
+        if not response.is_success:
+            raise errors.remote_status(response.status_code, response.text)
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            # Mirrors reqwest's ``error decoding response body for url (<url>)``
+            # template verbatim, substituting this instance's own upstream URL —
+            # the only part of the observed Rust text that is inherently
+            # per-instance (see errors.py's module docstring / task-6 report).
+            raise errors.bad_response(
+                f"error decoding response body for url ({response.url})"
+            ) from exc
+
         choices = data.get("choices", [])
         if not choices:
-            raise RuntimeError("LLM API returned no choices")
+            raise errors.empty_choices()
         return choices[0]["message"]["content"]

@@ -5,6 +5,7 @@ Port of LTEngine's main.rs (--features api), translated to Python/Litestar.
 
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,16 +14,21 @@ from typing import Any
 import httpx
 from litestar import Litestar, Request, Response, get, post
 from litestar.datastructures import State
+from litestar.exceptions import MethodNotAllowedException, NotFoundException
 from litestar.status_codes import (
     HTTP_200_OK,
     HTTP_400_BAD_REQUEST,
     HTTP_403_FORBIDDEN,
+    HTTP_404_NOT_FOUND,
+    HTTP_405_METHOD_NOT_ALLOWED,
     HTTP_501_NOT_IMPLEMENTED,
 )
 from litestar.types import ASGIApp, Receive, Scope, Send
 from ltengine_frontend import get_static_dir
 
+from . import errors
 from .config import Config
+from .errors import LlmError
 from .languages import LANGUAGES, detect_language, get_language_by_code
 from .llm_client import LLMClient
 from .prompt import PromptBuilder
@@ -78,6 +84,70 @@ def _validate_format(fmt: str) -> str | None:
     if fmt not in ("text", "html"):
         return "Invalid format. Supported formats: text, html"
     return None
+
+
+async def _parse_json_body(request: Request[Any, Any, State]) -> Any | Response:
+    """Parse the request body as JSON.
+
+    On syntax failure, returns a Rust-matching ``{"error": "Json deserialize
+    error: ..."}`` 400 Response instead of letting Litestar's own body-parsing
+    machinery raise (which would surface a differently-shaped
+    ``{"status_code": ..., "detail": ...}`` body). Callers must check
+    ``isinstance(result, Response)`` and return it unchanged when true.
+    """
+    raw = await request.body()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return Response(
+            content={"error": errors.json_deserialize_error(raw, exc)},
+            status_code=HTTP_400_BAD_REQUEST,
+            media_type="application/json",
+        )
+
+
+# ---------------------------------------------------------------------------
+# App-level exception handlers — every non-2xx body Litestar's own machinery
+# would otherwise shape as ``{"status_code": ..., "detail": ...}`` is
+# re-shaped here to match the observed Rust (actix) output byte-for-byte.
+# See .superpowers/sdd/task-6-report.md for the transcribed reference bodies.
+# ---------------------------------------------------------------------------
+
+
+def _llm_error_handler(request: Request[Any, Any, State], exc: LlmError) -> Response:
+    return Response(
+        content={"error": exc.message},
+        status_code=exc.http_status,
+        media_type="application/json",
+    )
+
+
+def _not_found_handler(request: Request[Any, Any, State], exc: NotFoundException) -> Response:
+    # Rust's actual behaviour: no explicit catch-all route exists, so an
+    # unmatched path falls through to the embedded static-file service, whose
+    # miss path is actix's bare `HttpResponse::NotFound().body("Not found")` —
+    # plain text, no Content-Type header at all (confirmed via the dump: the
+    # response has no content-type header). `{"error": ...}` does NOT apply
+    # here; transcribed as observed rather than per the brief's general prose.
+    return Response(
+        content=b"Not found",
+        status_code=HTTP_404_NOT_FOUND,
+        headers={"content-type": ""},
+    )
+
+
+def _method_not_allowed_handler(
+    request: Request[Any, Any, State], exc: MethodNotAllowedException
+) -> Response:
+    # Same static-file-service fallback as above, but its method guard (only
+    # GET/HEAD) rejects first: actix-web-static-files' generic 405, always
+    # "GET and HEAD" regardless of which route/method was actually intended.
+    return Response(
+        content="This resource only supports GET and HEAD.",
+        status_code=HTTP_405_METHOD_NOT_ALLOWED,
+        media_type="text/plain",
+        headers={"allow": "GET, HEAD"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +225,10 @@ def create_app(config: Config) -> Litestar:
 
     @post("/detect", name="detect")
     async def detect(request: Request[Any, Any, State]) -> Response:
-        body = await request.json()
+        parsed = await _parse_json_body(request)
+        if isinstance(parsed, Response):
+            return parsed
+        body = parsed
         q: str | None = body.get("q") if isinstance(body, dict) else None
         if not q or not q.strip():
             return Response(
@@ -174,13 +247,17 @@ def create_app(config: Config) -> Litestar:
     async def translate(request: Request[Any, Any, State]) -> Response:
         # Parse JSON or form body
         content_type = request.content_type[0] if request.content_type else ""
-        if "application/json" in content_type:
-            body = await request.json()
-        elif "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        if (
+            "application/x-www-form-urlencoded" in content_type
+            or "multipart/form-data" in content_type
+        ):
             form = await request.form()
-            body = dict(form)
+            body: Any = dict(form)
         else:
-            body = await request.json()
+            parsed = await _parse_json_body(request)
+            if isinstance(parsed, Response):
+                return parsed
+            body = parsed
 
         if not isinstance(body, dict):
             return Response(
@@ -265,11 +342,11 @@ def create_app(config: Config) -> Litestar:
                 config.llm_max_tokens_mult,
                 config.llm_max_tokens_floor,
             )
-            try:
-                raw = await llm_client.translate(prompt.system, prompt.user, max_tokens=cap)
-            except Exception as exc:  # noqa: BLE001 - deliberate fallback-to-source on any LLM failure
-                logger.error("LLM translation failed: %s", exc)
-                raw = q
+            # LlmError propagates to the `_llm_error_handler` exception handler
+            # registered below (Rust taxonomy: transient upstream -> 503, other
+            # upstream statuses / parse failures / empty choices -> 500). No
+            # silent fallback to the original text on a fast failure.
+            raw = await llm_client.translate(prompt.system, prompt.user, max_tokens=cap)
             translated_text = _improve_formatting(q, raw)
         else:
             translated_text = q
@@ -370,6 +447,11 @@ def create_app(config: Config) -> Litestar:
         middleware=[StaticFilesMiddleware],
         lifespan=[lifespan],
         debug=config.verbose,
+        exception_handlers={
+            LlmError: _llm_error_handler,
+            NotFoundException: _not_found_handler,
+            MethodNotAllowedException: _method_not_allowed_handler,
+        },
     )
 
 
