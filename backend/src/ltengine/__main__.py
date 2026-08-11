@@ -60,6 +60,43 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Optional API key to protect this server",
     )
     p.add_argument(
+        "--llm-max-tokens",
+        type=int,
+        default=0,
+        metavar="LLM_MAX_TOKENS",
+        help="Maximum output tokens per LLM request (0 = no limit) (default: 0)",
+    )
+    p.add_argument(
+        "--llm-chars-per-token",
+        type=float,
+        default=0.0,
+        metavar="LLM_CHARS_PER_TOKEN",
+        help="Dynamic cap (opt-in): characters-per-token divisor. The cap is active only "
+             "when this, --llm-max-tokens, and --llm-max-tokens-mult are all > 0 (default: 0)",
+    )
+    p.add_argument(
+        "--llm-max-tokens-mult",
+        type=float,
+        default=0.0,
+        metavar="LLM_MAX_TOKENS_MULT",
+        help="Dynamic cap (opt-in): output safety multiple. The cap is active only when "
+             "this, --llm-max-tokens, and --llm-chars-per-token are all > 0 (default: 0)",
+    )
+    p.add_argument(
+        "--llm-max-tokens-floor",
+        type=int,
+        default=64,
+        metavar="LLM_MAX_TOKENS_FLOOR",
+        help="Dynamic cap: minimum output tokens for tiny inputs (default: 64)",
+    )
+    p.add_argument(
+        "--llm-timeout",
+        type=float,
+        default=120.0,
+        metavar="LLM_TIMEOUT",
+        help="HTTP timeout in seconds for LLM API requests (0 = no timeout) (default: 120)",
+    )
+    p.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable verbose/debug logging",
@@ -81,6 +118,11 @@ def main() -> None:
         api_key=args.api_key,
         llm_api_key=args.llm_api_key,
         llm_model=args.llm_model,
+        llm_max_tokens=args.llm_max_tokens,
+        llm_chars_per_token=args.llm_chars_per_token,
+        llm_max_tokens_mult=args.llm_max_tokens_mult,
+        llm_max_tokens_floor=args.llm_max_tokens_floor,
+        llm_timeout=args.llm_timeout,
         verbose=args.verbose,
     )
 
@@ -109,6 +151,11 @@ def main() -> None:
     os.environ["LTENGINE_API_KEY"] = config.api_key
     os.environ["LTENGINE_LLM_API_KEY"] = config.llm_api_key
     os.environ["LTENGINE_LLM_MODEL"] = config.llm_model
+    os.environ["LTENGINE_LLM_MAX_TOKENS"] = str(config.llm_max_tokens)
+    os.environ["LTENGINE_LLM_CHARS_PER_TOKEN"] = str(config.llm_chars_per_token)
+    os.environ["LTENGINE_LLM_MAX_TOKENS_MULT"] = str(config.llm_max_tokens_mult)
+    os.environ["LTENGINE_LLM_MAX_TOKENS_FLOOR"] = str(config.llm_max_tokens_floor)
+    os.environ["LTENGINE_LLM_TIMEOUT"] = str(config.llm_timeout)
     os.environ["LTENGINE_VERBOSE"] = "1" if config.verbose else "0"
 
     Granian(

@@ -17,6 +17,11 @@ class Config:
     api_key: str = ""
     llm_api_key: str = ""
     llm_model: str = ""     # empty = auto-resolved from /v1/models
+    llm_max_tokens: int = 0
+    llm_chars_per_token: float = 0.0
+    llm_max_tokens_mult: float = 0.0
+    llm_max_tokens_floor: int = 64
+    llm_timeout: float = 120.0
     verbose: bool = False
 
     @classmethod
@@ -38,5 +43,10 @@ class Config:
             api_key=os.environ.get("LTENGINE_API_KEY", ""),
             llm_api_key=os.environ.get("LTENGINE_LLM_API_KEY", ""),
             llm_model=os.environ.get("LTENGINE_LLM_MODEL", ""),
+            llm_max_tokens=int(os.environ.get("LTENGINE_LLM_MAX_TOKENS", "0")),
+            llm_chars_per_token=float(os.environ.get("LTENGINE_LLM_CHARS_PER_TOKEN", "0.0")),
+            llm_max_tokens_mult=float(os.environ.get("LTENGINE_LLM_MAX_TOKENS_MULT", "0.0")),
+            llm_max_tokens_floor=int(os.environ.get("LTENGINE_LLM_MAX_TOKENS_FLOOR", "64")),
+            llm_timeout=float(os.environ.get("LTENGINE_LLM_TIMEOUT", "120.0")),
             verbose=os.environ.get("LTENGINE_VERBOSE", "") == "1",
         )

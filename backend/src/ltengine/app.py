@@ -11,19 +11,22 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from litestar import Litestar, Request, Response, get, post, route
+from litestar import Litestar, Request, Response, get, post
 from litestar.datastructures import State
-from litestar.enums import HttpMethod
-from litestar.response import File
-from litestar.status_codes import HTTP_200_OK, HTTP_400_BAD_REQUEST, HTTP_403_FORBIDDEN, HTTP_501_NOT_IMPLEMENTED
-from litestar.types import ASGIApp, Scope, Receive, Send
-
+from litestar.status_codes import (
+    HTTP_200_OK,
+    HTTP_400_BAD_REQUEST,
+    HTTP_403_FORBIDDEN,
+    HTTP_501_NOT_IMPLEMENTED,
+)
+from litestar.types import ASGIApp, Receive, Scope, Send
 from ltengine_frontend import get_static_dir
 
 from .config import Config
 from .languages import LANGUAGES, detect_language, get_language_by_code
 from .llm_client import LLMClient
 from .prompt import PromptBuilder
+from .token_budget import output_cap
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +101,9 @@ def create_app(config: Config) -> Litestar:
             format="%(asctime)s %(name)s %(levelname)s %(message)s",
         )
 
-        http_client = httpx.AsyncClient(timeout=120.0)
+        http_client = httpx.AsyncClient(
+            timeout=None if config.llm_timeout == 0 else httpx.Timeout(config.llm_timeout)
+        )
         llm_client = LLMClient(
             url=config.llm_url,
             model=config.llm_model,
@@ -253,9 +258,16 @@ def create_app(config: Config) -> Litestar:
         # Translate (skip LLM call if source == target)
         if source != target:
             prompt = pb.build(q)
+            cap = output_cap(
+                len(q),
+                config.llm_max_tokens,
+                config.llm_chars_per_token,
+                config.llm_max_tokens_mult,
+                config.llm_max_tokens_floor,
+            )
             try:
-                raw = await llm_client.translate(prompt.system, prompt.user)
-            except Exception as exc:
+                raw = await llm_client.translate(prompt.system, prompt.user, max_tokens=cap)
+            except Exception as exc:  # noqa: BLE001 - deliberate fallback-to-source on any LLM failure
                 logger.error("LLM translation failed: %s", exc)
                 raw = q
             translated_text = _improve_formatting(q, raw)
