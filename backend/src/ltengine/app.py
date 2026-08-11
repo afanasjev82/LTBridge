@@ -113,8 +113,18 @@ async def _parse_translate_payload(request: Request[Any, Any, State]) -> dict[st
       both BEFORE any handler-level (``check_params``) validation runs,
       matching Rust's parse-then-validate ordering exactly (``check_params``
       never runs on a payload that failed to parse/type-check).
-    - For form/multipart, values arrive as strings (HTTP form encoding has no
-      wire-level type system), so no typed-field check applies there.
+    - For form/multipart, Rust ALSO type-checks at parse time — this is a
+      correction of a prior version of this docstring, which incorrectly
+      claimed "HTTP form encoding has no wire-level type system, so no
+      typed-field check applies there." In fact ``parse_payload`` deserializes
+      form bodies into the SAME typed ``TranslateRequest`` struct via actix's
+      ``web::Form<TranslateRequest>`` (serde_urlencoded) and multipart bodies
+      via ``MultipartForm<MPTranslateRequest>`` (each field ``Option<MPText<T>>``).
+      The only non-string field is ``alternatives: Option<u32>``
+      (``Option<MPText<u32>>`` for multipart); a malformed value there fails
+      at the actix EXTRACTOR — before ``check_params`` — with a shape that
+      differs from both the JSON path and from the OTHER form content-type,
+      oracle-verified (``alternatives=lots``): see :func:`_check_form_alternatives`.
 
     Returns the parsed body dict, or a `Response` the caller must return
     unchanged (check via ``isinstance(result, Response)``).
@@ -136,9 +146,49 @@ async def _parse_translate_payload(request: Request[Any, Any, State]) -> dict[st
 
     if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
         form = await request.form()
-        return dict(form)
+        body = dict(form)
+        type_error = _check_form_alternatives(body, multipart="multipart/form-data" in content_type)
+        if type_error is not None:
+            return type_error
+        return body
 
     return _json_400("Unsupported content-type")
+
+
+def _check_form_alternatives(body: dict[str, Any], *, multipart: bool) -> Response | None:
+    """Reject a malformed ``alternatives`` field the way actix's own
+    extractor does — at PARSE time, before ``check_params`` ever runs, same
+    ordering as the JSON path's :func:`_check_typed_fields`. Unlike the JSON
+    path, form-urlencoded and multipart produce genuinely DIFFERENT error
+    shapes from each other (oracle-verified against ``alternatives=lots``):
+
+    - ``application/x-www-form-urlencoded`` (serde_urlencoded's ``u32``
+      ``FromStr`` failure): 400 ``"Parse error: invalid digit found in
+      string."``
+    - ``multipart/form-data`` (actix-multipart's ``MPText<u32>`` field
+      failure): 400 ``"An error occurred processing field: alternatives"``
+
+    A missing or empty value is fine (``Option<u32>`` -> ``None``, matches
+    the JSON path's ``if value is None: continue``). A negative int is
+    treated as a parse failure here too — Rust's actual behaviour for a
+    negative value on THIS content-type is unverified (no CASE exercises
+    it), the same documented simplification already noted for the JSON path
+    in :func:`_check_typed_fields`.
+    """
+    raw = body.get("alternatives")
+    if raw in (None, ""):
+        return None
+    try:
+        if int(raw) < 0:
+            raise ValueError("negative alternatives")
+    except (TypeError, ValueError):
+        message = (
+            "An error occurred processing field: alternatives"
+            if multipart
+            else "Parse error: invalid digit found in string."
+        )
+        return _json_400(message)
+    return None
 
 
 def _check_typed_fields(text: str, body: dict[str, Any]) -> Response | None:
@@ -359,20 +409,15 @@ def create_app(config: Config) -> Litestar:
         body = parsed
 
         # `alternatives` is typed `Option<u32>` on the Rust struct and is
-        # type-checked at PARSE time for every content type (JSON: already
-        # enforced above by `_parse_translate_payload`, so this always
-        # succeeds; form/multipart: values arrive as strings and are
-        # type-checked here instead, matching Rust's serde_urlencoded /
-        # MultipartForm extractors doing the same before `check_params` ever
-        # runs — though the exact message text for THIS content-type
-        # combination isn't oracle-verified, unlike the JSON case above).
+        # type-checked at PARSE time for EVERY content type — JSON via
+        # `_check_typed_fields`, form/multipart via `_check_form_alternatives`
+        # — both called from `_parse_translate_payload` above, before
+        # `check_params` ever runs. By the time control reaches here the
+        # value (if present) is therefore already guaranteed to be a
+        # non-negative int-parseable value; this is a plain coercion, not a
+        # second validation pass.
         raw_alternatives = body.get("alternatives")
-        try:
-            alternatives = int(raw_alternatives) if raw_alternatives not in (None, "") else 0
-        except (TypeError, ValueError):
-            return _json_400("Invalid request: invalid alternatives parameter")
-        if alternatives < 0:
-            return _json_400("Invalid request: invalid alternatives parameter")
+        alternatives = 0 if raw_alternatives in (None, "") else int(raw_alternatives)
 
         err = _check_params(body, config, ["q", "source", "target"])
         if err is not None:

@@ -70,6 +70,15 @@ CASES = [
         "/translate",
         {"json_body": {"q": "x", "source": "en", "target": None}},
     ),
+    # Genuine wrong-typed `target` (distinct from target_null above): a
+    # present, non-null, non-string value on the Option<String> field IS a
+    # serde type error — same family as q_wrong_type/source_wrong_type.
+    (
+        "target_wrong_type",
+        "POST",
+        "/translate",
+        {"json_body": {"q": "x", "source": "en", "target": 123}},
+    ),
     # --- Combined-violation ordering: missing-param wins over the (separate,
     # later) format check — matches Rust's check_params-then-check_format
     # sequencing exactly.
@@ -78,6 +87,27 @@ CASES = [
         "POST",
         "/translate",
         {"json_body": {"source": "en", "target": "ru", "format": "pdf"}},
+    ),
+    # --- Form/multipart typed-field parity: the app.py comment claiming
+    # form/multipart "has no wire-level type system, so no typed-field check
+    # applies" is FALSE per main.rs — the Form path deserializes via
+    # actix_web::web::Form<TranslateRequest> (serde_urlencoded,
+    # alternatives: Option<u32>) and multipart via
+    # MultipartForm<MPTranslateRequest> (alternatives: Option<MPText<u32>>),
+    # so a malformed `alternatives` fails at the actix EXTRACTOR (a
+    # different error shape) before check_params ever runs, exactly as the
+    # JSON path fails at serde before check_params.
+    (
+        "alternatives_garbage_form",
+        "POST",
+        "/translate",
+        {"form": {**B, "alternatives": "lots"}},
+    ),
+    (
+        "alternatives_garbage_multipart",
+        "POST",
+        "/translate",
+        {"files": {k: (None, v) for k, v in {**B, "alternatives": "lots"}.items()}},
     ),
 ]
 
@@ -117,6 +147,7 @@ AUTH_FLAGS = ["--api-key", "sekret"]
         "detect_no_key",
         "settings_still_lies",
         "badkey_and_overlimit_combo",
+        "missing_q_and_bad_key",
     ],
 )
 def test_api_key_parity(make_pair, case) -> None:
@@ -141,6 +172,18 @@ def test_api_key_parity(make_pair, case) -> None:
             "POST",
             "/translate",
             json_body={"q": over_q, "source": "ru", "target": "en", "api_key": "wrong"},
+        )
+    elif case == "missing_q_and_bad_key":
+        # Combined-violation ordering, the other direction from
+        # badkey_and_overlimit_combo above: the missing-required-param check
+        # is FIRST in Rust's check_params (loop over required_params, before
+        # the api-key branch), so a missing "q" wins over a wrong api_key —
+        # 400 "missing q parameter", not 403 "Invalid API key".
+        rust, py = fire_both(
+            pair,
+            "POST",
+            "/translate",
+            json_body={"source": "en", "target": "ru", "api_key": "nope"},
         )
     else:  # settings_still_lies: Rust hardcodes keyRequired/apiKeys false even with a key set
         rust, py = fire_both(pair, "GET", "/frontend/settings")
