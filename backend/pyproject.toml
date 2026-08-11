@@ -32,17 +32,3 @@ dev = [
   "ruff>=0.6",
   "mypy>=1.11",
 ]
-
-[tool.pytest.ini_options]
-testpaths = ["../tests"]
-asyncio_mode = "auto"
-markers = ["live: hits the real vLLM container; excluded by default"]
-addopts = "-m 'not live'"
-
-[tool.ruff]
-line-length = 100
-
-[tool.mypy]
-python_version = "3.12"
-strict = false
-check_untyped_defs = true
