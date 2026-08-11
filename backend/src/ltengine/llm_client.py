@@ -11,6 +11,36 @@ import httpx
 from . import errors
 
 
+def _is_valid_completion_shape(data: object) -> bool:
+    """Return True iff ``data`` matches ``ChatCompletionResponse``'s strict shape.
+
+    Mirrors serde's structural contract for llm_api.rs's
+    ``ChatCompletionResponse { choices: Vec<Choice>, usage: Option<Usage> }`` /
+    ``Choice { message: ResponseMessage, finish_reason: Option<String> }`` /
+    ``ResponseMessage { content: String }``: the body must be a JSON object with
+    a ``choices`` array, and every element of that array must itself be an
+    object with a ``message`` object carrying a string ``content`` field.
+    ``usage`` and ``finish_reason`` are optional (serde ``#[serde(default)]``)
+    and are not checked here. Deliberately does NOT check ``choices`` for
+    non-emptiness — an empty-but-well-shaped list is the separate ``NoChoices``
+    case, checked by the caller once this returns True.
+    """
+    if not isinstance(data, dict) or "choices" not in data:
+        return False
+    choices = data["choices"]
+    if not isinstance(choices, list):
+        return False
+    for choice in choices:
+        if not isinstance(choice, dict) or "message" not in choice:
+            return False
+        message = choice["message"]
+        if not isinstance(message, dict) or "content" not in message:
+            return False
+        if not isinstance(message["content"], str):
+            return False
+    return True
+
+
 class LLMClient:
     """Async client for an OpenAI-compatible /v1/chat/completions endpoint."""
 
@@ -78,24 +108,49 @@ class LLMClient:
                 json=payload,
                 headers=self._auth_headers(),
             )
+        except httpx.InvalidURL as exc:
+            # Not an httpx.HTTPError subclass (it's a plain Exception), so it
+            # would otherwise escape translate() as a non-LlmError. Rust has no
+            # equivalent failure mode pre-request (a malformed --llm-url fails
+            # reqwest::Client construction at startup, not per-request), so this
+            # is mapped to the same bucket as a connect failure: unreachable.
+            raise errors.unreachable(str(exc)) from exc
         except httpx.HTTPError as exc:
             raise errors.map_llm_failure(exc) from exc
 
         if not response.is_success:
             raise errors.remote_status(response.status_code, response.text)
 
-        try:
-            data = response.json()
-        except ValueError as exc:
+        def _parse_error() -> errors.LlmError:
             # Mirrors reqwest's ``error decoding response body for url (<url>)``
             # template verbatim, substituting this instance's own upstream URL —
             # the only part of the observed Rust text that is inherently
             # per-instance (see errors.py's module docstring / task-6 report).
-            raise errors.bad_response(
-                f"error decoding response body for url ({response.url})"
-            ) from exc
+            # Confirmed empirically (Fix wave 2) that Rust emits this EXACT
+            # generic message for every completion-body deserialize failure —
+            # a JSON-syntax error AND every structural mismatch against the
+            # strict ChatCompletionResponse shape (missing `choices`, a choice
+            # without `message`, a message without `content`, `content: null`,
+            # a non-object body) alike. There is no interpolated serde detail
+            # (e.g. "missing field `choices`") in the observed text — reqwest's
+            # Response::json() decode-error Display doesn't include the source
+            # chain. See .superpowers/sdd/task-6-report.md, Fix wave 2.
+            return errors.bad_response(f"error decoding response body for url ({response.url})")
 
-        choices = data.get("choices", [])
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise _parse_error() from exc
+
+        # Deserialize the WHOLE body into the strict completion shape before
+        # ever looking at `choices`' contents — matches Rust's
+        # `response.json::<ChatCompletionResponse>()`, which fails on any
+        # structural mismatch (ApiError::Parse) BEFORE the NoChoices check.
+        # `choices` present-but-empty is the only path to `empty_choices()`.
+        if not _is_valid_completion_shape(data):
+            raise _parse_error()
+
+        choices = data["choices"]
         if not choices:
             raise errors.empty_choices()
         return choices[0]["message"]["content"]

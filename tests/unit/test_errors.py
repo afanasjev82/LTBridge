@@ -75,6 +75,33 @@ def test_json_deserialize_error_key_must_be_a_string() -> None:
     assert message == "Json deserialize error: key must be a string at line 1 column 2"
 
 
+def test_json_deserialize_error_empty_body_eof_column() -> None:
+    # IMPORTANT fix-wave-2 finding: serde_json's EOF column is bytes consumed
+    # (0 for an empty body), not CPython's pos+1. Oracle-verified — see
+    # .superpowers/sdd/task-6-report.md, Fix wave 2.
+    raw = b""
+    try:
+        json.loads(raw)
+    except json.JSONDecodeError as exc:
+        message = json_deserialize_error(raw, exc)
+    else:  # pragma: no cover - sanity guard
+        raise AssertionError("expected a JSONDecodeError")
+    assert message == "Json deserialize error: EOF while parsing a value at line 1 column 0"
+
+
+def test_json_deserialize_error_truncated_object_eof_column() -> None:
+    # Second oracle-verified EOF case: 5 bytes consumed -> column 5 (was 6
+    # before the fix).
+    raw = b'{"a":'
+    try:
+        json.loads(raw)
+    except json.JSONDecodeError as exc:
+        message = json_deserialize_error(raw, exc)
+    else:  # pragma: no cover - sanity guard
+        raise AssertionError("expected a JSONDecodeError")
+    assert message == "Json deserialize error: EOF while parsing a value at line 1 column 5"
+
+
 def test_json_deserialize_error_expected_value() -> None:
     # Source-derived (serde_json ErrorCode::ExpectedSomeValue -> "expected
     # value"), NOT independently verified against the live Rust binary.

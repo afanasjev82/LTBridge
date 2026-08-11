@@ -162,21 +162,35 @@ def json_deserialize_error(raw: bytes, exc: json.JSONDecodeError) -> str:
     Best-effort port of serde_json's ``Display for ErrorImpl`` (``"{code} at
     line {line} column {column}"``), driven off CPython's ``json`` diagnostics.
     See the module-level notes above on the one verified case vs the rest.
+
+    Column at EOF: serde_json's EOF-family errors report ``column = bytes
+    consumed`` (0-indexed byte count) — e.g. an empty body is column 0, a
+    5-byte truncated body is column 5 — whereas CPython's ``colno`` is
+    ``pos + 1`` (1-indexed). Verified against the oracle (Fix wave 2, empty
+    body and ``{"a":``): every EOF-classified branch below must subtract 1
+    from ``exc.colno``; non-EOF branches are unaffected (the verified
+    ``{not json`` case must keep passing byte-for-byte).
     """
     text = raw.decode("utf-8", errors="replace")
     at_eof = exc.pos >= len(text)
+    is_eof_code = False
 
     if at_eof and exc.msg in _EOF_CODE:
         code = _EOF_CODE[exc.msg]
+        is_eof_code = True
     elif exc.msg == "Expecting ',' delimiter":
         container = _enclosing_container(text, exc.pos)
         if at_eof:
             code = "EOF while parsing a list" if container == "[" else "EOF while parsing an object"
+            is_eof_code = True
         else:
             code = "expected `,` or `]`" if container == "[" else "expected `,` or `}`"
     elif exc.msg in _NON_EOF_CODE:
         code = _NON_EOF_CODE[exc.msg]
     elif exc.msg.startswith("Unterminated string starting at"):
+        # NOT adjusted: CPython reports the position of the OPENING quote here,
+        # not end-of-input, so `at_eof`/the bytes-consumed rule don't apply the
+        # same way — this remains unverified best-effort (see module docstring).
         code = "EOF while parsing a string"
     elif exc.msg.startswith("Invalid control character"):
         code = "control character (\\u0000-\\u001F) found while parsing a string"
@@ -187,4 +201,5 @@ def json_deserialize_error(raw: bytes, exc: json.JSONDecodeError) -> str:
         # passthrough so the response is still a taxonomically-correct 400.
         code = exc.msg
 
-    return f"Json deserialize error: {code} at line {exc.lineno} column {exc.colno}"
+    colno = exc.colno - 1 if is_eof_code else exc.colno
+    return f"Json deserialize error: {code} at line {exc.lineno} column {colno}"

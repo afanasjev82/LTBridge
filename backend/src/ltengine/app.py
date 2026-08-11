@@ -172,7 +172,15 @@ def create_app(config: Config) -> Litestar:
         )
 
         http_client = httpx.AsyncClient(
-            timeout=None if config.llm_timeout == 0 else httpx.Timeout(config.llm_timeout)
+            timeout=None if config.llm_timeout == 0 else httpx.Timeout(config.llm_timeout),
+            # reqwest follows redirects by default (up to 10); httpx's default is
+            # follow_redirects=False. Matching reqwest's ceiling for parity — the
+            # differential mock can't emit a redirect, so this is reasoned from
+            # reqwest's documented defaults rather than oracle-captured; covered
+            # by a unit test on the constructed client instead (see task-6-report,
+            # Fix wave 2).
+            follow_redirects=True,
+            max_redirects=10,
         )
         llm_client = LLMClient(
             url=config.llm_url,
@@ -180,6 +188,10 @@ def create_app(config: Config) -> Litestar:
             api_key=config.llm_api_key,
             http_client=http_client,
         )
+        # Exposed on app.state so the constructed client is inspectable from
+        # tests (and, incidentally, any future admin/health introspection)
+        # without reaching into this closure's locals.
+        app.state.http_client = http_client
 
         if not config.llm_model:
             logger.info("Resolving model from %s/v1/models …", config.llm_url)
