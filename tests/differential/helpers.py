@@ -1,0 +1,70 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import Any
+
+import httpx
+
+from .conftest import ServerPair
+
+
+@dataclass
+class Snapshot:
+    status: int
+    content_type: str
+    body: bytes
+    chunked: bool
+    leading_spaces: int
+    json: Any | None
+
+
+def _snap(resp: httpx.Response) -> Snapshot:
+    body = resp.content
+    stripped = body.lstrip(b" ")
+    leading = len(body) - len(stripped)
+    try:
+        parsed = json.loads(stripped) if stripped else None
+    except json.JSONDecodeError:
+        parsed = None
+    return Snapshot(
+        status=resp.status_code,
+        content_type=resp.headers.get("content-type", "").split(";")[0].strip(),
+        body=body,
+        chunked=resp.headers.get("transfer-encoding", "") == "chunked",
+        leading_spaces=leading,
+        json=parsed,
+    )
+
+
+def _fire(base_url: str, method: str, path: str, *, json_body=None, form=None,
+          files=None, headers=None, timeout: float = 60.0) -> Snapshot:
+    with httpx.Client(timeout=timeout) as c:
+        resp = c.request(method, f"{base_url}{path}", json=json_body, data=form,
+                         files=files, headers=headers)
+    return _snap(resp)
+
+
+def fire_both(pair: ServerPair, method: str, path: str, **kw) -> tuple[Snapshot, Snapshot]:
+    return (_fire(pair.rust.base_url, method, path, **kw),
+            _fire(pair.py.base_url, method, path, **kw))
+
+
+def assert_parity(rust: Snapshot, py: Snapshot, *, normalize_heartbeat: bool = False) -> None:
+    assert py.status == rust.status, f"status: py={py.status} rust={rust.status}"
+    assert py.content_type == rust.content_type, (
+        f"content-type: py={py.content_type!r} rust={rust.content_type!r}")
+    if normalize_heartbeat:
+        # Heartbeat space count is timing-jittery; require both chunked with >=1 space,
+        # then compare the JSON payloads exactly.
+        assert rust.chunked and py.chunked, "expected chunked responses on both"
+        assert rust.leading_spaces >= 1 and py.leading_spaces >= 1
+        assert py.json == rust.json, f"json: py={py.json} rust={rust.json}"
+    else:
+        assert py.body == rust.body, f"body: py={py.body!r} rust={rust.body!r}"
+
+
+def last_payload(handle) -> dict:
+    reqs = handle.mock.requests()
+    assert reqs, "no chat-completions request recorded"
+    return reqs[-1]
