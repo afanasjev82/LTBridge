@@ -43,15 +43,15 @@ class PromptBuilder:
         self._target: str = "English"
         self._format: str = "text"
 
-    def set_source_language(self, name: str) -> "PromptBuilder":
+    def set_source_language(self, name: str) -> PromptBuilder:
         self._source = name
         return self
 
-    def set_target_language(self, name: str) -> "PromptBuilder":
+    def set_target_language(self, name: str) -> PromptBuilder:
         self._target = name
         return self
 
-    def set_format(self, fmt: str) -> "PromptBuilder":
+    def set_format(self, fmt: str) -> PromptBuilder:
         self._format = fmt
         return self
 
