@@ -11,6 +11,7 @@ both places together.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import httpx
 
@@ -203,3 +204,128 @@ def json_deserialize_error(raw: bytes, exc: json.JSONDecodeError) -> str:
 
     colno = exc.colno - 1 if is_eof_code else exc.colno
     return f"Json deserialize error: {code} at line {exc.lineno} column {colno}"
+
+
+# ---------------------------------------------------------------------------
+# Typed-field mismatches — port of serde's derived struct Deserialize for
+# `TranslateRequest` (main.rs: `q`/`source`/`target`/`format`/`api_key` are
+# `Option<String>`, `alternatives` is `Option<u32>`). Rust parses the JSON
+# body into this TYPED struct before any handler logic runs (`parse_payload`
+# -> `web::Json::<TranslateRequest>::from_request`), so a present-but-wrong-
+# typed field (e.g. `"q":123`) is rejected by serde as a 400 "Json
+# deserialize error: invalid type: ..." — the same message FAMILY as
+# `json_deserialize_error` above (both surface through actix's
+# `JsonPayloadError::Deserialize(serde_json::Error)` -> Display), but the
+# underlying `serde_json::Error` is a Data-category error (from
+# `serde::de::Error::invalid_type`), not Syntax/Eof, so the code text is
+# built from the VALUE's own JSON kind rather than CPython's json module
+# diagnostics — hence a separate code path here rather than reusing
+# `_NON_EOF_CODE`/`_EOF_CODE`.
+# ---------------------------------------------------------------------------
+
+#: Fields on TranslateRequest typed `Option<String>` — a present, non-null
+#: value must be a JSON string or the request 400s before any handler-level
+#: (`check_params`) validation runs.
+STRING_FIELDS = ("q", "source", "target", "format", "api_key")
+#: The one non-string field, typed `Option<u32>`.
+U32_FIELD = "alternatives"
+
+_decoder = json.JSONDecoder()
+
+
+def _skip_ws(text: str, i: int) -> int:
+    n = len(text)
+    while i < n and text[i] in " \t\n\r":
+        i += 1
+    return i
+
+
+def field_spans(text: str) -> dict[str, tuple[Any, int, int]]:
+    """Parse a top-level JSON object, returning each key's ``(value, start,
+    end)`` token span (0-indexed char offsets into ``text``) in JSON SOURCE
+    ORDER — the same order serde's derived ``Deserialize`` visits map entries
+    in, which matters because a wrong-typed field fails at the FIRST one
+    encountered in the input, not in struct-declaration order.
+
+    Returns ``{}`` for a non-object top level (arrays/scalars have no named
+    fields to type-check) or on any parse hiccup. ``text`` is assumed to
+    already be valid JSON — the caller only invokes this after ``json.loads``
+    has already succeeded on the same bytes — so this is a best-effort
+    re-walk (reusing :class:`json.JSONDecoder`'s own tokenizer via
+    ``raw_decode`` for each key/value), not a general parser; any surprise is
+    swallowed rather than crashing a request that already parsed cleanly.
+    """
+    spans: dict[str, tuple[Any, int, int]] = {}
+    try:
+        n = len(text)
+        i = _skip_ws(text, 0)
+        if i >= n or text[i] != "{":
+            return spans
+        i = _skip_ws(text, i + 1)
+        if i < n and text[i] == "}":
+            return spans
+        while True:
+            i = _skip_ws(text, i)
+            key, i = _decoder.raw_decode(text, i)
+            i = _skip_ws(text, i) + 1  # step past ':'
+            i = _skip_ws(text, i)
+            start = i
+            value, i = _decoder.raw_decode(text, i)
+            spans[str(key)] = (value, start, i)
+            i = _skip_ws(text, i)
+            if i < n and text[i] == ",":
+                i += 1
+                continue
+            break
+    except (ValueError, IndexError):
+        return {}
+    return spans
+
+
+def _line_col(text: str, offset: int) -> tuple[int, int]:
+    """serde_json line/column for a 0-indexed char offset: 1-indexed line;
+    column = characters consumed since the start of that line — the same
+    "bytes/chars consumed" convention already used for the EOF branches in
+    :func:`json_deserialize_error` above, extended here to the non-EOF Data
+    error case. Oracle-verified byte-for-byte: ``{"q":123}`` -> column 8,
+    ``{"q":"x","source":123,"target":"ru"}`` -> column 21, and a garbage
+    ``alternatives`` string value -> column 62.
+    """
+    prefix = text[:offset]
+    newlines = prefix.count("\n")
+    if newlines:
+        return newlines + 1, offset - prefix.rindex("\n") - 1
+    return 1, offset
+
+
+def _unexpected_desc(value: Any) -> str:
+    """Port of serde's ``Unexpected`` Display — the noun phrase naming what
+    WAS found, e.g. ``integer `123``` or ``string "lots"``. Covers the JSON
+    value kinds that can actually appear in a TranslateRequest body; ``bool``
+    is checked before ``int`` since Python's ``bool`` subclasses ``int``.
+    """
+    if isinstance(value, bool):
+        return f"boolean `{'true' if value else 'false'}`"
+    if isinstance(value, int):
+        return f"integer `{value}`"
+    if isinstance(value, float):
+        return f"floating point `{value}`"
+    if isinstance(value, str):
+        return f"string {json.dumps(value)}"
+    if isinstance(value, list):
+        return "sequence"
+    if isinstance(value, dict):
+        return "map"
+    return "null"
+
+
+def serde_invalid_type_error(text: str, end: int, value: Any, expected: str) -> str:
+    """Build the ``{"error": ...}`` message for a typed-field mismatch — the
+    Data-error analogue of :func:`json_deserialize_error`. ``end`` is the
+    value's span end from :func:`field_spans`; ``expected`` is the Rust type
+    noun phrase (``"a string"`` for the ``Option<String>`` fields, ``"u32"``
+    for ``alternatives``).
+    """
+    line, col = _line_col(text, end)
+    desc = _unexpected_desc(value)
+    return f"Json deserialize error: invalid type: {desc}, expected {expected} at line {line} column {col}"

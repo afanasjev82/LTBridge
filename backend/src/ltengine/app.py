@@ -86,24 +86,108 @@ def _validate_format(fmt: str) -> str | None:
     return None
 
 
-async def _parse_json_body(request: Request[Any, Any, State]) -> Any | Response:
-    """Parse the request body as JSON.
+def _json_400(message: str) -> Response:
+    """Build a Rust-matching ``{"error": ...}`` 400 response."""
+    return Response(
+        content={"error": message},
+        status_code=HTTP_400_BAD_REQUEST,
+        media_type="application/json",
+    )
 
-    On syntax failure, returns a Rust-matching ``{"error": "Json deserialize
-    error: ..."}`` 400 Response instead of letting Litestar's own body-parsing
-    machinery raise (which would surface a differently-shaped
-    ``{"status_code": ..., "detail": ...}`` body). Callers must check
-    ``isinstance(result, Response)`` and return it unchanged when true.
+
+async def _parse_translate_payload(request: Request[Any, Any, State]) -> dict[str, Any] | Response:
+    """Parse + type-validate a ``/translate`` or ``/detect`` request body.
+
+    Port of main.rs's shared ``parse_payload`` (used by BOTH handlers — the
+    Rust ``detect`` handler calls the exact same function as ``translate``)
+    plus the typed-field half of serde's derived ``TranslateRequest``
+    deserialize:
+
+    - A content-type outside JSON / ``application/x-www-form-urlencoded`` /
+      ``multipart/form-data`` is rejected with ``"Unsupported content-type"``
+      before any parsing is attempted (Rust: the trailing ``else`` branch of
+      ``parse_payload``'s content-type match).
+    - For JSON, a syntax failure 400s via :func:`errors.json_deserialize_error`
+      (Task 6); a present-but-wrong-typed field (e.g. ``"q":123`` where
+      ``q: Option<String>``) 400s via :func:`errors.serde_invalid_type_error` —
+      both BEFORE any handler-level (``check_params``) validation runs,
+      matching Rust's parse-then-validate ordering exactly (``check_params``
+      never runs on a payload that failed to parse/type-check).
+    - For form/multipart, values arrive as strings (HTTP form encoding has no
+      wire-level type system), so no typed-field check applies there.
+
+    Returns the parsed body dict, or a `Response` the caller must return
+    unchanged (check via ``isinstance(result, Response)``).
     """
-    raw = await request.body()
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as exc:
+    content_type = request.content_type[0] if request.content_type else ""
+
+    if "application/json" in content_type:
+        raw = await request.body()
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            return _json_400(errors.json_deserialize_error(raw, exc))
+        if isinstance(parsed, dict):
+            text = raw.decode("utf-8", errors="replace")
+            type_error = _check_typed_fields(text, parsed)
+            if type_error is not None:
+                return type_error
+        return parsed  # type: ignore[no-any-return]
+
+    if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        form = await request.form()
+        return dict(form)
+
+    return _json_400("Unsupported content-type")
+
+
+def _check_typed_fields(text: str, body: dict[str, Any]) -> Response | None:
+    """Reject the first field (in JSON source order) whose value doesn't
+    match its Rust type — see `errors.field_spans`/`errors.serde_invalid_type_error`.
+    Returns `None` when every present field type-checks.
+    """
+    for key, (value, _start, end) in errors.field_spans(text).items():
+        if value is None:
+            continue
+        if key in errors.STRING_FIELDS and not isinstance(value, str):
+            return _json_400(errors.serde_invalid_type_error(text, end, value, "a string"))
+        if key == errors.U32_FIELD and (
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+        ):
+            return _json_400(errors.serde_invalid_type_error(text, end, value, "u32"))
+    return None
+
+
+def _check_params(body: dict[str, Any], config: Config, required: list[str]) -> Response | None:
+    """Port of main.rs's ``check_params``: missing-required -> api-key ->
+    byte char-limit, in that exact order — verified against the oracle with
+    combined-violation inputs (a bad key alongside an over-limit ``q`` 403s,
+    not 400; a missing ``q`` alongside a bad api key 400s on the missing
+    param, not 403). ``"q"`` must be present in ``required`` for every caller
+    ('/translate': q, source, target; '/detect': q) since the char-limit
+    check always reads it, mirroring Rust's ``body.q.as_ref().unwrap()``
+    (safe there for the identical reason).
+    """
+    for key in required:
+        value = body.get(key)
+        if not isinstance(value, str) or not value.strip():
+            return _json_400(f"Invalid request: missing {key} parameter")
+
+    if config.api_key and body.get("api_key") != config.api_key:
         return Response(
-            content={"error": errors.json_deserialize_error(raw, exc)},
-            status_code=HTTP_400_BAD_REQUEST,
+            content={"error": "Invalid API key"},
+            status_code=HTTP_403_FORBIDDEN,
             media_type="application/json",
         )
+
+    q_value = body.get("q")
+    q = q_value if isinstance(q_value, str) else ""
+    q_bytes = len(q.encode("utf-8"))
+    if q_bytes > config.char_limit:
+        return _json_400(
+            f"Invalid request: request ({q_bytes}) exceeds text limit ({config.char_limit})"
+        )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -215,18 +299,21 @@ def create_app(config: Config) -> Litestar:
     @get("/languages", name="languages")
     async def languages() -> list[dict[str, Any]]:
         return [
-            {"code": lang.code, "name": lang.name, "targets": lang.targets}
-            for lang in LANGUAGES
+            {"code": lang.code, "name": lang.name, "targets": lang.targets} for lang in LANGUAGES
         ]
 
     @get("/frontend/settings", name="frontend_settings")
     async def frontend_settings() -> dict[str, Any]:
         return {
+            # Rust hardcodes both of these to False regardless of whether
+            # --api-key is set (main.rs's get_frontend_settings) — the
+            # frontend settings payload lies about auth even when an API key
+            # is actually enforced server-side. Not a bug to "fix"; parity.
             "apiKeys": False,
             "charLimit": config.char_limit,
             "filesTranslation": False,
             "frontendTimeout": 1000,
-            "keyRequired": bool(config.api_key),
+            "keyRequired": False,
             "language": {
                 "source": {"code": "auto", "name": "Auto Detect"},
                 "target": {"code": "en", "name": "English"},
@@ -237,87 +324,73 @@ def create_app(config: Config) -> Litestar:
 
     @post("/detect", name="detect")
     async def detect(request: Request[Any, Any, State]) -> Response:
-        parsed = await _parse_json_body(request)
+        parsed = await _parse_translate_payload(request)
         if isinstance(parsed, Response):
             return parsed
+        if not isinstance(parsed, dict):
+            return _json_400("Invalid request body")
         body = parsed
-        q: str | None = body.get("q") if isinstance(body, dict) else None
-        if not q or not q.strip():
-            return Response(
-                content={"error": "Invalid request: missing q parameter"},
-                status_code=HTTP_400_BAD_REQUEST,
-                media_type="application/json",
-            )
+
+        err = _check_params(body, config, ["q"])
+        if err is not None:
+            return err
+
+        q_value = body.get("q")
+        q = q_value if isinstance(q_value, str) else ""
         result = detect_language(q)
+        # Key order matches Rust's `serde_json::json!({"language":...,
+        # "confidence":...})`: dynamically-built `Value::Object`s serialize
+        # via serde_json's default BTreeMap (alphabetical), NOT insertion
+        # order — confirmed against the oracle across every multi-key
+        # dynamic response body (frontend/settings, translate's result).
         return Response(
-            content=[{"language": result.language.code, "confidence": result.confidence}],
+            content=[{"confidence": result.confidence, "language": result.language.code}],
             status_code=HTTP_200_OK,
             media_type="application/json",
         )
 
     @post("/translate", name="translate")
     async def translate(request: Request[Any, Any, State]) -> Response:
-        # Parse JSON or form body
-        content_type = request.content_type[0] if request.content_type else ""
-        if (
-            "application/x-www-form-urlencoded" in content_type
-            or "multipart/form-data" in content_type
-        ):
-            form = await request.form()
-            body: Any = dict(form)
-        else:
-            parsed = await _parse_json_body(request)
-            if isinstance(parsed, Response):
-                return parsed
-            body = parsed
+        parsed = await _parse_translate_payload(request)
+        if isinstance(parsed, Response):
+            return parsed
+        if not isinstance(parsed, dict):
+            return _json_400("Invalid request body")
+        body = parsed
 
-        if not isinstance(body, dict):
-            return Response(
-                content={"error": "Invalid request body"},
-                status_code=HTTP_400_BAD_REQUEST,
-                media_type="application/json",
-            )
+        # `alternatives` is typed `Option<u32>` on the Rust struct and is
+        # type-checked at PARSE time for every content type (JSON: already
+        # enforced above by `_parse_translate_payload`, so this always
+        # succeeds; form/multipart: values arrive as strings and are
+        # type-checked here instead, matching Rust's serde_urlencoded /
+        # MultipartForm extractors doing the same before `check_params` ever
+        # runs — though the exact message text for THIS content-type
+        # combination isn't oracle-verified, unlike the JSON case above).
+        raw_alternatives = body.get("alternatives")
+        try:
+            alternatives = int(raw_alternatives) if raw_alternatives not in (None, "") else 0
+        except (TypeError, ValueError):
+            return _json_400("Invalid request: invalid alternatives parameter")
+        if alternatives < 0:
+            return _json_400("Invalid request: invalid alternatives parameter")
 
-        q: str = body.get("q") or ""
-        source: str = body.get("source") or ""
-        target: str = body.get("target") or ""
-        fmt: str = body.get("format") or "text"
-        req_api_key: str = body.get("api_key") or ""
-        alternatives: int = int(body.get("alternatives") or 0)
+        err = _check_params(body, config, ["q", "source", "target"])
+        if err is not None:
+            return err
 
-        # Validate required fields
-        for field_name, value in [("q", q), ("source", source), ("target", target)]:
-            if not value.strip():
-                return Response(
-                    content={"error": f"Invalid request: missing {field_name} parameter"},
-                    status_code=HTTP_400_BAD_REQUEST,
-                    media_type="application/json",
-                )
+        def _str_field(key: str) -> str:
+            value = body.get(key)
+            return value if isinstance(value, str) else ""
 
-        # API key check
-        if config.api_key and req_api_key != config.api_key:
-            return Response(
-                content={"error": "Invalid API key"},
-                status_code=HTTP_403_FORBIDDEN,
-                media_type="application/json",
-            )
-
-        # Char limit
-        if len(q) > config.char_limit:
-            return Response(
-                content={"error": f"Invalid request: request ({len(q)}) exceeds text limit ({config.char_limit})"},
-                status_code=HTTP_400_BAD_REQUEST,
-                media_type="application/json",
-            )
+        q = _str_field("q")
+        source = _str_field("source")
+        target = _str_field("target")
+        fmt = _str_field("format") or "text"
 
         # Format check
         fmt_error = _validate_format(fmt)
         if fmt_error:
-            return Response(
-                content={"error": fmt_error},
-                status_code=HTTP_400_BAD_REQUEST,
-                media_type="application/json",
-            )
+            return _json_400(fmt_error)
 
         # Build prompt
         pb = PromptBuilder()
@@ -328,20 +401,12 @@ def create_app(config: Config) -> Litestar:
         else:
             src_lang = get_language_by_code(source)
             if src_lang is None:
-                return Response(
-                    content={"error": f"{source} is not supported"},
-                    status_code=HTTP_400_BAD_REQUEST,
-                    media_type="application/json",
-                )
+                return _json_400(f"{source} is not supported")
             pb.set_source_language(src_lang.name)
 
         tgt_lang = get_language_by_code(target)
         if tgt_lang is None:
-            return Response(
-                content={"error": f"{target} is not supported"},
-                status_code=HTTP_400_BAD_REQUEST,
-                media_type="application/json",
-            )
+            return _json_400(f"{target} is not supported")
         pb.set_target_language(tgt_lang.name)
 
         # Translate (skip LLM call if source == target)
@@ -361,9 +426,18 @@ def create_app(config: Config) -> Litestar:
             raw = await llm_client.translate(prompt.system, prompt.user, max_tokens=cap)
             translated_text = _improve_formatting(q, raw)
         else:
-            translated_text = q
+            # Identity path: still runs through the same formatting pass Rust
+            # applies (`improve_formatting(&q, &q)`), not the raw untouched q
+            # — trims and re-applies q's own leading/trailing whitespace rules.
+            translated_text = _improve_formatting(q, q)
 
-        result: dict[str, Any] = {"translatedText": translated_text}
+        # Key order (both here and the nested detectedLanguage object) matches
+        # Rust's `serde_json::json!({...})` — a dynamically-built
+        # `Value::Object` serializes via serde_json's default BTreeMap
+        # (alphabetical), not insertion order: alternatives < detectedLanguage
+        # < translatedText, and confidence < language. Insert in that fixed
+        # order regardless of which optional keys end up present.
+        result: dict[str, Any] = {}
 
         if alternatives > 0:
             result["alternatives"] = []
@@ -371,9 +445,11 @@ def create_app(config: Config) -> Litestar:
         if source == "auto":
             detected = detect_language(q)
             result["detectedLanguage"] = {
-                "language": detected.language.code,
                 "confidence": detected.confidence,
+                "language": detected.language.code,
             }
+
+        result["translatedText"] = translated_text
 
         return Response(content=result, status_code=HTTP_200_OK, media_type="application/json")
 
@@ -411,8 +487,12 @@ def create_app(config: Config) -> Litestar:
             path: str = scope.get("path", "/")
             # API routes handled by Litestar — only catch root and unknown paths
             api_prefixes = (
-                "/translate", "/detect", "/languages", "/health",
-                "/frontend", "/suggest",
+                "/translate",
+                "/detect",
+                "/languages",
+                "/health",
+                "/frontend",
+                "/suggest",
             )
             if path == "/" or not any(path.startswith(p) for p in api_prefixes):
                 # Serve index.html for root; for everything else try the file
