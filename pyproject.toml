@@ -1,0 +1,5 @@
+[tool.uv.workspace]
+members = ["backend", "frontend"]
+
+[tool.uv.sources]
+ltengine-frontend = { workspace = true }

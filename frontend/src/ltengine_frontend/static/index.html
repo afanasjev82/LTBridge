@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LTEngine — Translation</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>LTEngine</h1>
+      <p class="subtitle">LLM-powered machine translation</p>
+    </header>
+
+    <div class="lang-row">
+      <div class="lang-select-wrap">
+        <label for="source-lang">Source</label>
+        <select id="source-lang">
+          <option value="auto">Auto Detect</option>
+        </select>
+      </div>
+      <button id="swap-btn" title="Swap languages" aria-label="Swap languages">⇄</button>
+      <div class="lang-select-wrap">
+        <label for="target-lang">Target</label>
+        <select id="target-lang"></select>
+      </div>
+    </div>
+
+    <div class="translate-area">
+      <div class="text-panel">
+        <textarea id="source-text" placeholder="Enter text to translate…" rows="8" autocomplete="off" spellcheck="true"></textarea>
+        <div class="panel-footer">
+          <span id="char-count">0</span> / <span id="char-limit">—</span>
+        </div>
+      </div>
+      <div class="text-panel output-panel">
+        <textarea id="target-text" placeholder="Translation will appear here…" rows="8" readonly></textarea>
+        <div class="panel-footer">
+          <span id="detected-lang"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="action-row">
+      <button id="translate-btn" class="primary-btn">Translate</button>
+      <span id="status-msg" aria-live="polite"></span>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
