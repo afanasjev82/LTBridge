@@ -1,0 +1,6 @@
+# Normalize all text files to LF in the repository; checkout uses the
+# platform's native line ending unless overridden below. This project's
+# suite is WSL/Linux-only (see README) and the differential harness diffs
+# fixture text byte-for-byte, so a mixed-CRLF tree is a correctness trap,
+# not just cosmetic — see .superpowers/sdd/task-9-report.md.
+* text=auto eol=lf
