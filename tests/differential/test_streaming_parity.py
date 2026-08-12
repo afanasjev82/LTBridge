@@ -21,11 +21,6 @@ case would be flaky on either implementation.
 
 from __future__ import annotations
 
-import json
-from typing import Any
-
-import pytest
-
 from .helpers import Snapshot, assert_parity, fire_both
 from .mock_upstream import MockBehavior
 
@@ -122,23 +117,6 @@ def test_slow_success_non_ascii_is_raw_utf8(pair) -> None:
     assert _payload(py) == _payload(rust), f"payload: py={_payload(py)!r} rust={_payload(rust)!r}"
 
 
-def _split_detected(snap: Snapshot) -> tuple[list[str], Any, dict[str, Any]]:
-    """Return (top-level key order, detectedLanguage value, rest-of-body).
-
-    ``detectedLanguage``'s VALUES cannot be compared across the two servers yet:
-    Rust detects via whatlang, Python via lingua, and they disagree (oracle:
-    ``{"confidence":3,"language":"da"}`` for "Hello"; Python: ``it``/17).
-    Detection parity is Task 9's job — this helper isolates it so the Task 8
-    property (does ``detectedLanguage`` still appear on the slow-FAILURE
-    fallback body, and in the right alphabetical slot?) is testable now.
-    """
-    body = json.loads(_payload(snap), object_pairs_hook=list)
-    keys = [k for k, _ in body]
-    rest = {k: v for k, v in body if k != "detectedLanguage"}
-    detected = dict(next((v for k, v in body if k == "detectedLanguage"), []))
-    return keys, detected, rest
-
-
 def test_slow_failure_auto_source_keeps_detected_language(pair) -> None:
     """Oracle-verified: the slow-failure fallback body is built by the SAME
     ``translate_response_json`` the success path uses, so ``detectedLanguage``
@@ -147,6 +125,11 @@ def test_slow_failure_auto_source_keeps_detected_language(pair) -> None:
 
         {"alternatives":[],"detectedLanguage":{"confidence":3,"language":"da"},
          "translatedText":"Hello"}
+
+    Task 9 landed whatlang-parity detection, so ``detectedLanguage``'s VALUES
+    (not just its shape/position) are now byte-identical between the two
+    servers — a plain ``assert_parity`` covers the whole body, replacing the
+    former ``_split_detected`` partial comparison that only asserted shape.
     """
     pair.reset()
     for h in (pair.rust, pair.py):
@@ -157,17 +140,4 @@ def test_slow_failure_auto_source_keeps_detected_language(pair) -> None:
     assert rust.status == 200 and rust.chunked and rust.leading_spaces >= 1
     assert py.status == rust.status
     assert py.chunked and py.leading_spaces >= 1
-
-    rust_keys, rust_detected, rust_rest = _split_detected(rust)
-    py_keys, py_detected, py_rest = _split_detected(py)
-
-    assert rust_keys == ["alternatives", "detectedLanguage", "translatedText"]
-    assert py_keys == rust_keys, f"key order: py={py_keys} rust={rust_keys}"
-    assert rust_rest == {"alternatives": [], "translatedText": "Hello"}
-    assert py_rest == rust_rest, f"body (minus detection): py={py_rest} rust={rust_rest}"
-    if py_detected == rust_detected:
-        pytest.fail("Task 9 landed — tighten this test to full assert_parity")
-    # Values differ until Task 9 ports whatlang; the SHAPE must already match.
-    assert list(py_detected) == list(rust_detected) == ["confidence", "language"]
-    assert isinstance(py_detected["confidence"], int)
-    assert isinstance(py_detected["language"], str)
+    assert_parity(rust, py, normalize_heartbeat=True)

@@ -8,7 +8,7 @@ dependencies = [
     "litestar[standard]>=2.19.0",
     "granian[uvloop]>=2.6.0",
     "httpx>=0.28.1",
-    "lingua-language-detector>=2.0.0",
+    "whatlang-py",
     "ltengine-frontend",
 ]
 

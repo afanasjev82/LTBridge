@@ -112,20 +112,9 @@ CASES = [
 ]
 
 
-#: Detection-dependent cases: the manager's `detect_language` (lingua) doesn't
-#: match Rust's whatlang yet (Task 9). Everything else in CASES must be green
-#: in THIS task; these are the only sanctioned strict xfails.
-XFAIL_DETECTION_DEPENDENT = {"detect_ok"}
-
-
 def _case_param(case: tuple[str, str, str, dict[str, Any]]) -> Any:
     name, method, path, kw = case
-    marks = (
-        [pytest.mark.xfail(reason="whatlang parity lands in Task 9", strict=True)]
-        if name in XFAIL_DETECTION_DEPENDENT
-        else []
-    )
-    return pytest.param(name, method, path, kw, marks=marks, id=name)
+    return pytest.param(name, method, path, kw, id=name)
 
 
 @pytest.mark.parametrize("name,method,path,kw", [_case_param(c) for c in CASES])

@@ -1,15 +1,14 @@
 """Language registry and offline language detection.
 
-Port of LTEngine's languages.rs using lingua-language-detector.
+Port of LTEngine's languages.rs, backed by whatlang (via the vendored
+`whatlang_py` PyO3 binding in `whatlang-py/`) for byte-parity detection.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
-from lingua import Language as LinguaLanguage, LanguageDetectorBuilder
-
+import whatlang_py
 
 # ---------------------------------------------------------------------------
 # Language definitions (port of LANGS in languages.rs)
@@ -75,8 +74,8 @@ _ALL_PUBLIC_CODES = [alias if alias else code for code, alias, _ in _LANG_DEFS]
 class Language:
     """A supported translation language."""
 
-    code: str           # Public code returned in API responses (alias if present)
-    name: str           # Display name
+    code: str  # Public code returned in API responses (alias if present)
+    name: str  # Display name
     targets: list[str]  # All other public codes (can translate to any language)
     internal_code: str  # Internal code used for lookups
 
@@ -85,12 +84,14 @@ def _build_languages() -> list[Language]:
     langs: list[Language] = []
     for internal_code, alias, name in _LANG_DEFS:
         public_code = alias if alias else internal_code
-        langs.append(Language(
-            code=public_code,
-            name=name,
-            targets=_ALL_PUBLIC_CODES[:],
-            internal_code=internal_code,
-        ))
+        langs.append(
+            Language(
+                code=public_code,
+                name=name,
+                targets=_ALL_PUBLIC_CODES[:],
+                internal_code=internal_code,
+            )
+        )
     return langs
 
 
@@ -105,7 +106,7 @@ for _code, _alias, _ in _LANG_DEFS:
     _ALIAS_TO_INTERNAL[_code] = _code  # internal_code maps to itself
 
 
-def get_language_by_code(code: str) -> Optional[Language]:
+def get_language_by_code(code: str) -> Language | None:
     """Resolve a public or internal language code to a Language object."""
     internal = _ALIAS_TO_INTERNAL.get(code)
     if internal is None:
@@ -114,72 +115,14 @@ def get_language_by_code(code: str) -> Optional[Language]:
 
 
 # ---------------------------------------------------------------------------
-# Offline language detection via lingua-language-detector
+# Offline language detection via whatlang (whatlang_py), parity with
+# languages.rs's `detect_lang`.
 # ---------------------------------------------------------------------------
 
-# Map lingua Language enum values to our internal codes
-_LINGUA_TO_INTERNAL: dict[str, str] = {
-    "ENGLISH": "en",
-    "ALBANIAN": "sq",
-    "ARABIC": "ar",
-    "AZERBAIJANI": "az",
-    "BASQUE": "eu",
-    "BENGALI": "bn",
-    "BULGARIAN": "bg",
-    "CATALAN": "ca",
-    "CHINESE": "zh",
-    "CZECH": "cs",
-    "DANISH": "da",
-    "DUTCH": "nl",
-    "ESPERANTO": "eo",
-    "ESTONIAN": "et",
-    "FINNISH": "fi",
-    "FRENCH": "fr",
-    "GALICIAN": "gl",
-    "GERMAN": "de",
-    "GREEK": "el",
-    "HEBREW": "he",
-    "HINDI": "hi",
-    "HUNGARIAN": "hu",
-    "INDONESIAN": "id",
-    "IRISH": "ga",
-    "ITALIAN": "it",
-    "JAPANESE": "ja",
-    "KOREAN": "ko",
-    "LATVIAN": "lv",
-    "LITHUANIAN": "lt",
-    "MALAY": "ms",
-    "NORWEGIAN_BOKMAL": "nb",
-    "PERSIAN": "fa",
-    "POLISH": "pl",
-    "PORTUGUESE": "pt",
-    "ROMANIAN": "ro",
-    "RUSSIAN": "ru",
-    "SERBIAN": "sr",
-    "SLOVAK": "sk",
-    "SLOVENE": "sl",
-    "SPANISH": "es",
-    "SWEDISH": "sv",
-    "TAGALOG": "tl",
-    "THAI": "th",
-    "TURKISH": "tr",
-    "UKRAINIAN": "uk",
-    "URDU": "ur",
-    "VIETNAMESE": "vi",
-}
-
-# Build detector restricted to languages we actually support
-_SUPPORTED_LINGUA = [
-    lang for lang in LinguaLanguage.all()
-    if lang.name in _LINGUA_TO_INTERNAL
-]
-
-_detector = (
-    LanguageDetectorBuilder
-    .from_languages(*_SUPPORTED_LINGUA)
-    .with_preloaded_language_models()
-    .build()
-)
+# whatlang_py.detect() already returns the display name after languages.rs's
+# Mandarin->Chinese remap (see whatlang-py/src/lib.rs), so this is a direct
+# name -> internal-code lookup over our own LANGS display names.
+_NAME_TO_INTERNAL: dict[str, str] = {name: code for code, _alias, name in _LANG_DEFS}
 
 
 @dataclass
@@ -189,13 +132,14 @@ class DetectionResult:
 
 
 def detect_language(text: str) -> DetectionResult:
-    """Detect the language of *text*. Returns English with confidence 0 on failure."""
+    """Detect the language of *text* via whatlang. Returns English with confidence 0 on failure."""
     fallback = DetectionResult(language=LANGUAGES[0], confidence=0)
-    result = _detector.detect_language_of(text)
+    result = whatlang_py.detect(text)
     if result is None:
         return fallback
 
-    internal_code = _LINGUA_TO_INTERNAL.get(result.name)
+    name, confidence = result
+    internal_code = _NAME_TO_INTERNAL.get(name)
     if internal_code is None:
         return fallback
 
@@ -203,6 +147,4 @@ def detect_language(text: str) -> DetectionResult:
     if lang is None:
         return fallback
 
-    confidence_value = _detector.compute_language_confidence(text, result)
-    confidence_pct = int(confidence_value * 100)
-    return DetectionResult(language=lang, confidence=confidence_pct)
+    return DetectionResult(language=lang, confidence=confidence)

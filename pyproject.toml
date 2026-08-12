@@ -1,8 +1,9 @@
 [tool.uv.workspace]
-members = ["backend", "frontend"]
+members = ["backend", "frontend", "whatlang-py"]
 
 [tool.uv.sources]
 ltengine-frontend = { workspace = true }
+whatlang-py = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -18,3 +19,6 @@ python_version = "3.12"
 strict = false
 check_untyped_defs = true
 files = ["backend/src"]
+# whatlang_py is a native PyO3 extension (whatlang-py/); resolve it via its
+# checked-in .pyi stub even when the compiled extension isn't installed.
+mypy_path = ["whatlang-py"]
