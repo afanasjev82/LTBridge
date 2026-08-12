@@ -53,7 +53,7 @@ def _encode(body: ResultBody) -> bytes:
     This must be byte-identical to what Litestar emits for the same dict, which
     is ``encode_json(content, default_serializer)`` — msgspec: compact
     separators, raw UTF-8, keys in insertion order (the caller inserts them in
-    the alphabetical order serde_json's ``BTreeMap`` produces; see app.py).
+    the alphabetical order serde_json's ``BTreeMap`` produces; see routes.py).
     ``json.dumps`` is NOT interchangeable here: its defaults
     (``ensure_ascii=True`` plus ``", "``/``": "`` separators) diverge from
     serde_json on any non-ASCII translation and on every body with >1 key.

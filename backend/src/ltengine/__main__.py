@@ -141,7 +141,7 @@ def main() -> None:
     # is not picklable — passing `target=<app instance>` only works on 'fork' platforms,
     # where the child inherits the parent's memory instead of unpickling. So we use
     # Granian's documented factory-import pattern: an import-string target
-    # ("ltengine.app:app_factory") + factory=True, and hand the config to the worker via
+    # ("ltengine.server.app:app_factory") + factory=True, and hand the config to the worker via
     # environment variables (Config.from_env(), read inside app_factory()) instead of a
     # live object.
     os.environ["LTENGINE_LLM_URL"] = config.llm_url
@@ -159,7 +159,7 @@ def main() -> None:
     os.environ["LTENGINE_VERBOSE"] = "1" if config.verbose else "0"
 
     Granian(
-        target="ltengine.app:app_factory",
+        target="ltengine.server.app:app_factory",
         factory=True,
         address=config.host,
         port=config.port,

@@ -17,8 +17,8 @@ from __future__ import annotations
 import re
 
 from litestar.testing import TestClient
-from ltengine.app import _resolve_static_path, create_app
 from ltengine.config import Config
+from ltengine.server.app import _resolve_static_path, create_app
 from ltengine_frontend import get_static_dir
 
 
