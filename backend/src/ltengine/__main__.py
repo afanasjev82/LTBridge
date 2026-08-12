@@ -101,6 +101,21 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable verbose/debug logging",
     )
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "Granian worker processes (default: 1). The Rust reference binary's actix-web "
+            "runtime defaults to one OS thread per CPU core with no --workers flag at all; a "
+            "single Python worker process is GIL-bound to one core no matter how many "
+            "concurrent requests arrive, so this is the Python-side lever for the same "
+            "real-parallelism headroom (see bench/REPORT.md, B1 optimizations). Left at 1 for "
+            "every existing caller (differential/live tests, default CLI use) — raise it "
+            "explicitly for a concurrency benchmark or a real multi-core deployment."
+        ),
+    )
     return p
 
 
@@ -164,7 +179,7 @@ def main() -> None:
         address=config.host,
         port=config.port,
         interface=Interfaces.ASGI,
-        workers=1,
+        workers=args.workers,
         log_level="debug" if config.verbose else "info",
     ).serve()
 

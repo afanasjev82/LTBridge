@@ -147,11 +147,40 @@ def _check_form_alternatives(body: dict[str, Any], *, multipart: bool) -> Respon
     return None
 
 
+def _has_type_mismatch(body: dict[str, Any]) -> bool:
+    """Cheap type check against the already-parsed body — no re-walk of the JSON
+    source. Same per-field rules as :func:`_check_typed_fields`'s precise pass.
+    """
+    for key, value in body.items():
+        if value is None:
+            continue
+        if key in errors.STRING_FIELDS and not isinstance(value, str):
+            return True
+        if key == errors.U32_FIELD and (
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+        ):
+            return True
+    return False
+
+
 def _check_typed_fields(text: str, body: dict[str, Any]) -> Response | None:
     """Reject the first field (in JSON source order) whose value doesn't
     match its Rust type — see `errors.field_spans`/`errors.serde_invalid_type_error`.
     Returns `None` when every present field type-checks.
+
+    ``body`` is the SAME dict ``json.loads(text-as-bytes)`` already produced by the
+    caller — its key order and values are therefore already identical to what
+    ``errors.field_spans(text)`` would re-derive by walking ``text`` a second time
+    (both go through CPython's json decoder over the same bytes; Python dicts
+    preserve JSON source/insertion order either way, including the last-value-wins
+    behaviour of a duplicate key). ``_has_type_mismatch`` exploits that to skip the
+    expensive span-tracking re-parse entirely on the overwhelmingly common
+    well-typed request — ``field_spans`` only runs when there's an actual mismatch
+    to build a precise (span-based) error message for, which is the one thing the
+    fast check can't produce on its own.
     """
+    if not _has_type_mismatch(body):
+        return None
     for key, (value, _start, end) in errors.field_spans(text).items():
         if value is None:
             continue

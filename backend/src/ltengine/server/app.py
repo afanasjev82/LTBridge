@@ -201,6 +201,15 @@ def create_app(config: Config) -> Litestar:
             level=logging.DEBUG if config.verbose else logging.INFO,
             format="%(asctime)s %(name)s %(levelname)s %(message)s",
         )
+        # httpx logs "HTTP Request: POST ..." at INFO for every upstream call — a
+        # third-party access-log nobody asked for, live on the request path since
+        # its logger propagates to root. Under concurrent load this is a real,
+        # measured cost (B1 profiling in bench/REPORT.md: cProfile traced roughly a
+        # third of hot-path time to LogRecord construction + the queue-handler
+        # dispatch it feeds — see the `logging_config=None` note on `_LTEngineApp`
+        # below for the other half of this fix). WARNING keeps genuine upstream
+        # failures visible on this logger, drops the per-request noise.
+        logging.getLogger("httpx").setLevel(logging.WARNING)
 
         # Exposed on app.state so the constructed client is inspectable from
         # tests (and, incidentally, any future admin/health introspection)
@@ -357,6 +366,20 @@ def create_app(config: Config) -> Litestar:
         ],
         lifespan=[lifespan],
         debug=config.verbose,
+        # Left at Litestar's default (`Empty`), the framework silently installs its own
+        # `LoggingConfig()` — a root-logger `QueueHandler` backed by a background-thread
+        # `QueueListener` (Python 3.12's native dictConfig queue support; see
+        # litestar/logging/config.py `default_handlers`/`configure_root_logger=True`).
+        # That pipeline made the `logging.basicConfig(...)` call in `lifespan()` above a
+        # silent no-op (root already had a handler, and `basicConfig` refuses to touch an
+        # already-configured root logger) and routed every log record — including every
+        # httpx per-request line — through a cross-thread queue. B1 profiling attributed a
+        # large share of the C=32 wrapper-overhead gap to exactly that: LogRecord
+        # construction, queue put/get lock contention, and the listener thread's dequeue
+        # loop, all paid per request under load. `None` disables it outright, so our own
+        # `basicConfig` call is the one and only (synchronous, single-thread) logging
+        # config actually in effect. See bench/REPORT.md, "B1 optimizations".
+        logging_config=None,
         exception_handlers={
             LlmError: _llm_error_handler,
             NotFoundException: _not_found_handler,
