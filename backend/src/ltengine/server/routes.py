@@ -147,20 +147,29 @@ def _check_form_alternatives(body: dict[str, Any], *, multipart: bool) -> Respon
     return None
 
 
+def _field_type_mismatch(key: str, value: Any) -> bool:
+    """True iff ``value`` doesn't match ``key``'s Rust type — the single source of
+    truth for the per-field rule both :func:`_has_type_mismatch` (fast, no error
+    detail) and :func:`_check_typed_fields` (precise, builds the error message) key
+    off, so the rule can't drift between the two passes. ``None`` never mismatches
+    (every field is ``Option<T>``). ``STRING_FIELDS`` and ``U32_FIELD`` are disjoint,
+    so at most one of the two conditions can ever fire for a given key.
+    """
+    if value is None:
+        return False
+    if key in errors.STRING_FIELDS and not isinstance(value, str):
+        return True
+    return key == errors.U32_FIELD and (
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+    )
+
+
 def _has_type_mismatch(body: dict[str, Any]) -> bool:
     """Cheap type check against the already-parsed body — no re-walk of the JSON
-    source. Same per-field rules as :func:`_check_typed_fields`'s precise pass.
+    source. Same per-field rule (:func:`_field_type_mismatch`) as
+    :func:`_check_typed_fields`'s precise pass.
     """
-    for key, value in body.items():
-        if value is None:
-            continue
-        if key in errors.STRING_FIELDS and not isinstance(value, str):
-            return True
-        if key == errors.U32_FIELD and (
-            isinstance(value, bool) or not isinstance(value, int) or value < 0
-        ):
-            return True
-    return False
+    return any(_field_type_mismatch(key, value) for key, value in body.items())
 
 
 def _check_typed_fields(text: str, body: dict[str, Any]) -> Response | None:
@@ -182,14 +191,10 @@ def _check_typed_fields(text: str, body: dict[str, Any]) -> Response | None:
     if not _has_type_mismatch(body):
         return None
     for key, (value, _start, end) in errors.field_spans(text).items():
-        if value is None:
+        if not _field_type_mismatch(key, value):
             continue
-        if key in errors.STRING_FIELDS and not isinstance(value, str):
-            return _json_400(errors.serde_invalid_type_error(text, end, value, "a string"))
-        if key == errors.U32_FIELD and (
-            isinstance(value, bool) or not isinstance(value, int) or value < 0
-        ):
-            return _json_400(errors.serde_invalid_type_error(text, end, value, "u32"))
+        expected = "a string" if key in errors.STRING_FIELDS else "u32"
+        return _json_400(errors.serde_invalid_type_error(text, end, value, expected))
     return None
 
 

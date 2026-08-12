@@ -207,8 +207,14 @@ def create_app(config: Config) -> Litestar:
         # measured cost (B1 profiling in bench/REPORT.md: cProfile traced roughly a
         # third of hot-path time to LogRecord construction + the queue-handler
         # dispatch it feeds — see the `logging_config=None` note on `_LTEngineApp`
-        # below for the other half of this fix). WARNING keeps genuine upstream
-        # failures visible on this logger, drops the per-request noise.
+        # below for the other half of this fix). httpx's `_client.py` calls
+        # `logger.info(...)` at exactly two call sites and nowhere else — it has no
+        # WARNING/ERROR logging of its own; a transport failure (connect refused,
+        # timeout, ...) surfaces as a raised exception, not a log record, and is
+        # handled by `LLMClient`/`errors.map_llm_failure` regardless of this
+        # logger's level. So WARNING here silences httpx's per-request noise
+        # entirely — it does not "keep failures visible on a quieter level", there
+        # is no such record to keep.
         logging.getLogger("httpx").setLevel(logging.WARNING)
 
         # Exposed on app.state so the constructed client is inspectable from
@@ -379,6 +385,19 @@ def create_app(config: Config) -> Litestar:
         # loop, all paid per request under load. `None` disables it outright, so our own
         # `basicConfig` call is the one and only (synchronous, single-thread) logging
         # config actually in effect. See bench/REPORT.md, "B1 optimizations".
+        #
+        # Caveat: Litestar's own exception middleware only logs an UNHANDLED exception's
+        # traceback when `app.logging_config` is truthy (`middleware.py`:
+        # `if litestar_app.logging_config and (logger := litestar_app.logger): ...
+        # handle_exception_logging(...)`) — with `logging_config=None` that path is dead,
+        # so a genuine bug that isn't one of the three types below (LlmError,
+        # NotFoundException, MethodNotAllowedException) now logs NOTHING through
+        # Litestar's own machinery, `--verbose`/`debug=True` included. `debug=True` still
+        # puts the traceback in the HTTP response body for local dev, but nothing lands
+        # in the server's own logs/console. If that gap is ever felt in practice, the fix
+        # is an explicit `except Exception` handler here that logs via `logger` before
+        # re-raising/responding — not reverting this flag (that brings the queue pipeline
+        # back).
         logging_config=None,
         exception_handlers={
             LlmError: _llm_error_handler,

@@ -14,6 +14,7 @@ verified here).
 from __future__ import annotations
 
 import os
+import subprocess
 
 import httpx
 import pytest
@@ -21,6 +22,19 @@ import pytest
 from tests.differential.conftest import _launch_py, _launch_rust
 
 LIVE_URL = os.environ.get("LTENGINE_BENCH_LLM_URL", "http://localhost:8000")
+
+
+def _terminate(proc: subprocess.Popen) -> None:
+    """Same teardown as `tests/differential/conftest.py`'s `make_pair` fixture:
+    terminate, then wait up to 10s, then kill if it didn't exit — a bare
+    `.terminate()` with no wait/kill fallback can leave an orphaned process behind
+    if the server doesn't unwind cleanly within some bounded time.
+    """
+    proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
 
 
 @pytest.mark.live
@@ -39,8 +53,8 @@ def test_live_translate_both_servers() -> None:
             assert body["translatedText"].strip()
             assert body["detectedLanguage"]["language"] == "ru"
     finally:
-        for s in (rust, py):
-            s.proc.terminate()
+        _terminate(rust.proc)
+        _terminate(py.proc)
 
 
 @pytest.mark.live
@@ -56,4 +70,4 @@ def test_live_long_text_heartbeat_py() -> None:
         assert r.status_code == 200
         assert r.json()["translatedText"].strip()
     finally:
-        py.proc.terminate()
+        _terminate(py.proc)

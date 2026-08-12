@@ -113,7 +113,15 @@ def _build_parser() -> argparse.ArgumentParser:
             "concurrent requests arrive, so this is the Python-side lever for the same "
             "real-parallelism headroom (see bench/REPORT.md, B1 optimizations). Left at 1 for "
             "every existing caller (differential/live tests, default CLI use) — raise it "
-            "explicitly for a concurrency benchmark or a real multi-core deployment."
+            "explicitly for a concurrency benchmark or a real multi-core deployment. "
+            "WARNING: N>1 currently BREAKS /metrics — each worker is a separate process with "
+            "its own CollectorRegistry (built fresh per-process in create_app()), so scrapes "
+            "land on whichever worker answered that request and counters are not aggregated "
+            "across workers; a client polling /metrics sees per-process values that jump "
+            "around and are not monotonically increasing for the service as a whole, breaking "
+            "Prometheus rate()/counter semantics. Fine for a throughput benchmark that ignores "
+            "/metrics (as bench/bench_overhead.py does); do not use N>1 in any deployment that "
+            "scrapes metrics until a shared/aggregated registry exists."
         ),
     )
     return p
