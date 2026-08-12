@@ -21,7 +21,7 @@ p50 swung ~29-36ms across identical repeats — see bench/REPORT.md). The amende
     bar is physical here.
   - C=8 (single run): informational only, no gate (same reasoning trajectory as C=32,
     just not as severe — not worth a second unphysical bar).
-  - C=32 (>= 5 repeated runs, `--runs N`): GATED on RPS ratio ONLY —
+  - C=32 (>= 5 repeated runs, `--runs N`): GATED on RATIO OF MEDIAN RPS values —
     median(py_rps) / median(rust_rps) >= 0.70 across the repeats. p50/p95/p99 are still
     printed per run, labeled INFORMATIONAL, to keep them visible without gating on them.
 
@@ -389,10 +389,12 @@ def main() -> int:
         type=int,
         default=DEFAULT_RUNS,
         metavar="N",
-        help=f"B1 only: repeat the C=32 arms N times and gate on the median RPS ratio "
-        f"(default: {DEFAULT_RUNS}; must be >= 1). Ignored for --b2.",
+        help=f"B1 only: number of C=32 repeats; minimum 5 required for the amended median RPS gate "
+        f"(default: {DEFAULT_RUNS}). Ignored for --b2.",
     )
     args = ap.parse_args()
+    if args.runs < 5:
+        ap.error("--runs must be >= 5 (the amended C=32 gate requires a median over at least 5 runs)")
     lines = asyncio.run(b2(args.b2)) if args.b2 else asyncio.run(b1(args.runs))
     print("\n".join(lines))
     return 1 if any("FAIL" in ln for ln in lines) else 0
