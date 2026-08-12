@@ -32,6 +32,7 @@ from .errors import LlmError
 from .languages import LANGUAGES, detect_language, get_language_by_code
 from .llm_client import LLMClient
 from .prompt import PromptBuilder
+from .streaming import respond_with_grace
 from .token_budget import output_cap
 
 logger = logging.getLogger(__name__)
@@ -454,49 +455,76 @@ def create_app(config: Config) -> Litestar:
             return _json_400(f"{target} is not supported")
         pb.set_target_language(tgt_lang.name)
 
-        # Translate (skip LLM call if source == target)
-        if source != target:
-            prompt = pb.build(q)
-            cap = output_cap(
-                len(q),
-                config.llm_max_tokens,
-                config.llm_chars_per_token,
-                config.llm_max_tokens_mult,
-                config.llm_max_tokens_floor,
+        # Rust builds EVERY /translate 200 body — identity, fast success, and
+        # the slow-failure fallback alike — through one function,
+        # `translate_response_json(q, translated_text, source, alternatives)`,
+        # which applies `improve_formatting` itself. Mirroring that single
+        # builder here is what guarantees the streamed fallback body cannot
+        # drift from the success body (oracle-verified: a slow failure with
+        # source="auto" still carries `detectedLanguage`, and `alternatives`
+        # when requested).
+        #
+        # Detection is hoisted out of the builder so it runs at most once per
+        # request even though the builder may be called twice (success body +
+        # fallback body); it is a pure function of `q`, so this is a
+        # byte-identical rearrangement of Rust's per-call `detect_lang`.
+        detected = detect_language(q) if source == "auto" else None
+
+        def _result_body(translated_text: str) -> dict[str, Any]:
+            """Port of main.rs's ``translate_response_json``.
+
+            Key order (both here and the nested detectedLanguage object)
+            matches Rust's `serde_json::json!({...})` — a dynamically-built
+            `Value::Object` serializes via serde_json's default BTreeMap
+            (alphabetical), not insertion order: alternatives <
+            detectedLanguage < translatedText, and confidence < language.
+            Insert in that fixed order regardless of which optional keys end
+            up present.
+            """
+            body: dict[str, Any] = {}
+
+            if alternatives > 0:
+                body["alternatives"] = []
+
+            if detected is not None:
+                body["detectedLanguage"] = {
+                    "confidence": detected.confidence,
+                    "language": detected.language.code,
+                }
+
+            body["translatedText"] = _improve_formatting(q, translated_text)
+            return body
+
+        # Identity path: no LLM call, so no grace machinery — Rust returns here
+        # before the race is even set up. The formatting pass still runs
+        # (`improve_formatting(&q, &q)`), so the response is not the raw
+        # untouched q; it trims and re-applies q's own whitespace rules.
+        if source == target:
+            return Response(
+                content=_result_body(q), status_code=HTTP_200_OK, media_type="application/json"
             )
-            # LlmError propagates to the `_llm_error_handler` exception handler
-            # registered below (Rust taxonomy: transient upstream -> 503, other
-            # upstream statuses / parse failures / empty choices -> 500). No
-            # silent fallback to the original text on a fast failure.
+
+        prompt = pb.build(q)
+        cap = output_cap(
+            len(q),
+            config.llm_max_tokens,
+            config.llm_chars_per_token,
+            config.llm_max_tokens_mult,
+            config.llm_max_tokens_floor,
+        )
+
+        async def work() -> dict[str, Any]:
+            assert llm_client is not None  # constructed in `lifespan`, before serving
             raw = await llm_client.translate(prompt.system, prompt.user, max_tokens=cap)
-            translated_text = _improve_formatting(q, raw)
-        else:
-            # Identity path: still runs through the same formatting pass Rust
-            # applies (`improve_formatting(&q, &q)`), not the raw untouched q
-            # — trims and re-applies q's own leading/trailing whitespace rules.
-            translated_text = _improve_formatting(q, q)
+            return _result_body(raw)
 
-        # Key order (both here and the nested detectedLanguage object) matches
-        # Rust's `serde_json::json!({...})` — a dynamically-built
-        # `Value::Object` serializes via serde_json's default BTreeMap
-        # (alphabetical), not insertion order: alternatives < detectedLanguage
-        # < translatedText, and confidence < language. Insert in that fixed
-        # order regardless of which optional keys end up present.
-        result: dict[str, Any] = {}
-
-        if alternatives > 0:
-            result["alternatives"] = []
-
-        if source == "auto":
-            detected = detect_language(q)
-            result["detectedLanguage"] = {
-                "confidence": detected.confidence,
-                "language": detected.language.code,
-            }
-
-        result["translatedText"] = translated_text
-
-        return Response(content=result, status_code=HTTP_200_OK, media_type="application/json")
+        # Grace-race (main.rs:364-411). A failure that lands INSIDE the grace
+        # period propagates as an LlmError to `_llm_error_handler` below (Rust
+        # taxonomy: transient upstream -> 503, other upstream statuses / parse
+        # failures / empty choices -> 500). Only a failure that arrives AFTER
+        # the 200 has been committed to the wire degrades to the original text
+        # — Rust's wart, reproduced deliberately. See streaming.py.
+        return await respond_with_grace(work(), fallback_body=_result_body(q))
 
     @post("/translate_file", name="translate_file")
     async def translate_file() -> Response:
