@@ -1,4 +1,4 @@
-from ltengine.prompt import PromptBuilder
+from ltengine.core.prompt import PromptBuilder
 
 SYSTEM_TEXT = (
     "You are an expert linguist, specializing in translation. "

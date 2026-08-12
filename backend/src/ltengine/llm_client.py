@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import httpx
 
-from . import errors
+from .core import errors
 
 
 def _is_valid_completion_shape(data: object) -> bool:

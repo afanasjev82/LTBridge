@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from ltengine.errors import LlmError
+from ltengine.core.errors import LlmError
 from ltengine.llm_client import LLMClient
 
 

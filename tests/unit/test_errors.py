@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from ltengine.errors import (
+from ltengine.core.errors import (
     bad_response,
     empty_choices,
     json_deserialize_error,

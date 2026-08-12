@@ -1,4 +1,4 @@
-from ltengine.token_budget import output_cap
+from ltengine.core.token_budget import output_cap
 
 
 def test_disabled_when_max_tokens_zero() -> None:

@@ -35,58 +35,21 @@ from prometheus_client import (
     generate_latest,
 )
 
-from . import errors
 from .config import Config
-from .errors import LlmError
-from .languages import LANGUAGES, detect_language, get_language_by_code
+from .core import errors
+from .core.errors import LlmError
+from .core.formatting import improve_formatting
+from .core.languages import LANGUAGES, detect_language, get_language_by_code
+from .core.prompt import PromptBuilder
+from .core.token_budget import output_cap
 from .llm_client import LLMClient
-from .prompt import PromptBuilder
 from .streaming import respond_with_grace
-from .token_budget import output_cap
 
 logger = logging.getLogger(__name__)
-
-_PUNCTUATION = set("!?.,;。")
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _improve_formatting(source: str, translation: str) -> str:
-    """Post-process translation output to align punctuation and case with source.
-
-    Direct port of improve_formatting() in LTEngine's main.rs.
-    """
-    t = translation.strip()
-
-    if not source:
-        return ""
-    if not t:
-        return source
-
-    q_last = source[-1]
-    t_last = t[-1]
-
-    if q_last in _PUNCTUATION:
-        if q_last != t_last:
-            if t_last in _PUNCTUATION:
-                t = t[:-1]
-            t += q_last
-    elif t_last in _PUNCTUATION:
-        t = t[:-1]
-
-    if source.islower():
-        t = t.lower()
-    elif source.isupper():
-        t = t.upper()
-    elif source and t:
-        if source[0].islower() and t[0].isupper():
-            t = t[0].lower() + t[1:]
-        elif source[0].isupper() and t[0].islower():
-            t = t[0].upper() + t[1:]
-
-    return t.strip()
 
 
 def _validate_format(fmt: str) -> str | None:
@@ -606,7 +569,7 @@ def create_app(config: Config) -> Litestar:
                     "language": detected.language.code,
                 }
 
-            body["translatedText"] = _improve_formatting(q, translated_text)
+            body["translatedText"] = improve_formatting(q, translated_text)
             return body
 
         # Identity path: no LLM call, so no grace machinery — Rust returns here
