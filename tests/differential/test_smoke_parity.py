@@ -16,7 +16,8 @@ def test_translate_happy_path_parity(pair) -> None:
 
 
 def test_health_get_is_truly_empty_no_content_type(pair) -> None:
-    # Coordinator follow-up: spec S3.4 pins Rust /health as "200, EMPTY body" --
+    # The Medusa V2 program spec's LTEngine api-mode inventory pins Rust /health
+    # as "200, EMPTY body" (this repo's own P1 spec doesn't restate it) --
     # oracle-verified GET /health -> 200, Content-Length: 0, body b"", and NO
     # content-type header at all (main.rs's handler is a bare
     # `HttpResponse::Ok().finish()`).
