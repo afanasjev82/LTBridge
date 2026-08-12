@@ -45,12 +45,14 @@ logger = logging.getLogger(__name__)
 _STATIC_DIR: Path = get_static_dir()
 _STATIC_ROOT: Path = _STATIC_DIR.resolve()  # cached once — never re-resolved per request
 
-# The routes Litestar itself owns — static resolution never shadows one of
-# these, even via a trailing slash (e.g. "/translate/"). This is an
-# EXACT-match exclusion (own path, or own path with a trailing slash
-# stripped), not a prefix check: "/translate/x" isn't a real route either
-# way, so it isn't specially excluded — it just won't resolve to a file and
-# falls through to Litestar's routing like any other miss.
+# The routes Litestar itself owns. This is an EXACT-match set — a trailing
+# slash (e.g. "/translate/") is NOT a member (final-review CRITICAL 1: it
+# used to be excluded via `path.rstrip("/")`, which let Litestar's own
+# trailing-slash route normalization silently 200-translate `POST
+# /translate/`). `_LTEngineApp.__call__` below checks membership directly and
+# is the ONLY place that decides whether a path is "exact" — every other
+# path, "/translate/" included, is fully owned by the outer layer and never
+# reaches Litestar's router at all.
 _API_PATHS = frozenset(
     {
         "/health",
@@ -72,6 +74,63 @@ _API_PATHS = frozenset(
 # path in `create_app` (Task 11 fix wave 2) so the two can never drift apart.
 _METHOD_NOT_ALLOWED_BODY = "This resource only supports GET and HEAD."
 _METHOD_NOT_ALLOWED_HEADERS = {"allow": "GET, HEAD"}
+
+
+def _method_not_allowed_asgi_response() -> ASGIResponse:
+    """The oracle-pinned generic 405, built once so every call site (the
+    static-hit branch, the "owned" non-exact-path branch, and the routed-405
+    exception handler) shares the exact same body/status/headers."""
+    return ASGIResponse(
+        body=_METHOD_NOT_ALLOWED_BODY,
+        media_type="text/plain",
+        status_code=HTTP_405_METHOD_NOT_ALLOWED,
+        headers=_METHOD_NOT_ALLOWED_HEADERS,
+    )
+
+
+# Final-review CRITICAL 2 / Minor 7 (ledger T6-5): the OTHER oracle-pinned
+# generic body — actix's bare `HttpResponse::NotFound().body("Not found")`,
+# hit both for a genuinely unmatched path AND for a GET/HEAD request against
+# an API path whose actix route guard doesn't match (falls through to the
+# same embedded static-file miss). Oracle-verified: NO content-type header at
+# all (not an empty one), and on HEAD an EMPTY body with the byte count a GET
+# would have carried in Content-Length. `ASGIResponse.__init__` always
+# `setdefault`s a content-type whenever the status allows a body, with no
+# supported way to opt out through the public constructor — so the header is
+# stripped by hand, once, here; every code path that produces this response
+# goes through this single builder so body/status/header-omission can never
+# drift between them.
+_NOT_FOUND_BODY = b"Not found"
+
+
+def _not_found_asgi_response(*, is_head: bool = False) -> ASGIResponse:
+    resp = ASGIResponse(
+        body=b"" if is_head else _NOT_FOUND_BODY,
+        status_code=HTTP_404_NOT_FOUND,
+        headers={"content-length": str(len(_NOT_FOUND_BODY))} if is_head else None,
+    )
+    del resp.headers["content-type"]
+    return resp
+
+
+class _NotFoundResponse(Response[bytes]):
+    """A ``Response`` whose ASGI conversion is
+    :func:`_not_found_asgi_response` byte-for-byte — the only way to omit the
+    content-type header entirely, since ``Response.to_asgi_response()``'s own
+    pipeline always sets one via ``ASGIResponse.__init__``'s ``setdefault``.
+    Subclasses ``Response`` (rather than duck-typing an unrelated object)
+    purely so the ``exception_handlers`` mapping's
+    ``Callable[[Request, ExceptionT], Response]`` contract still type-checks.
+    """
+
+    __slots__ = ("_is_head",)
+
+    def __init__(self, *, is_head: bool) -> None:
+        super().__init__(content=_NOT_FOUND_BODY, status_code=HTTP_404_NOT_FOUND)
+        self._is_head = is_head
+
+    def to_asgi_response(self, *args: Any, **kwargs: Any) -> ASGIResponse:  # type: ignore[override]
+        return _not_found_asgi_response(is_head=self._is_head)
 
 
 def _guess_mime(suffix: str) -> str:
@@ -106,8 +165,21 @@ def _resolve_static_path(path: str) -> tuple[Path, str] | None:
     what a GET, HEAD, or any other method does with a hit (parity: Rust's
     embedded static-file service 200s GET/HEAD and 405s everything else on
     the exact same path set, so both outcomes need the same resolution).
+
+    The ``_API_PATHS`` exclusion below is an EXACT match ONLY — unlike a
+    prior revision, a trailing slash (``"/translate/"``) is deliberately NOT
+    excluded here (final-review CRITICAL 1). It is instead an ordinary,
+    never-matching candidate path, exactly like Rust's own behaviour: actix's
+    route matching is exact, so ``"/translate/"`` never reaches the
+    ``/translate`` handler at all — it falls through to the embedded
+    static-file service like any other miss, and 404s/405s there. Litestar's
+    router, left to its own devices, silently NORMALIZES a trailing slash
+    onto the exact route (so ``POST /translate/`` used to 200-translate) —
+    the fix is that the caller (``_LTEngineApp.__call__``) now never hands a
+    non-exact path to Litestar's router at all; see there for the full
+    ownership split.
     """
-    if path in _API_PATHS or path.rstrip("/") in _API_PATHS:
+    if path in _API_PATHS:
         return None
 
     if path == "/":
@@ -145,22 +217,32 @@ def _not_found_handler(request: Request[Any, Any, State], exc: NotFoundException
     # Rust's actual behaviour: no explicit catch-all route exists, so an
     # unmatched path falls through to the embedded static-file service, whose
     # miss path is actix's bare `HttpResponse::NotFound().body("Not found")` —
-    # plain text, no Content-Type header at all (confirmed via the dump: the
-    # response has no content-type header). `{"error": ...}` does NOT apply
-    # here; transcribed as observed rather than per the brief's general prose.
-    return Response(
-        content=b"Not found",
-        status_code=HTTP_404_NOT_FOUND,
-        headers={"content-type": ""},
-    )
+    # plain text, NO Content-Type header at all. Effectively unreachable
+    # after the final-review CRITICAL 1 fix (`_LTEngineApp.__call__` now owns
+    # every non-exact-API path itself and never hands one to Litestar's
+    # router, so Litestar's own routing never raises `NotFoundException` in
+    # practice) — kept registered defensively, and built through
+    # `_NotFoundResponse` (the same builder every REACHABLE 404 uses), so it
+    # can't drift even as dead code.
+    return _NotFoundResponse(is_head=request.method == "HEAD")
 
 
 def _method_not_allowed_handler(
     request: Request[Any, Any, State], exc: MethodNotAllowedException
 ) -> Response:
-    # Same static-file-service fallback as above, but its method guard (only
-    # GET/HEAD) rejects first: actix-web-static-files' generic 405, always
-    # "GET and HEAD" regardless of which route/method was actually intended.
+    # Litestar hands off here when the PATH matched a real route but the
+    # METHOD didn't. Rust has no such distinct case: a matched-path/wrong-
+    # method request falls through to the SAME embedded static-file service
+    # as any other miss, and that service's own method guard (GET/HEAD only)
+    # decides the shape — final-review CRITICAL 2, oracle-verified for both a
+    # POST-only route (`GET /translate`) and a GET-only route (`HEAD
+    # /languages`): GET/HEAD is ALLOWED by the guard, then 404s on the file
+    # lookup (there's no file named "translate"/"languages"). Any OTHER
+    # method (POST/DELETE/PUT/...) is rejected by the guard itself, before a
+    # file lookup ever happens — the generic 405, always "GET and HEAD",
+    # regardless of which route/method was actually intended.
+    if request.method in ("GET", "HEAD"):
+        return _NotFoundResponse(is_head=request.method == "HEAD")
     return Response(
         content=_METHOD_NOT_ALLOWED_BODY,
         status_code=HTTP_405_METHOD_NOT_ALLOWED,
@@ -238,16 +320,27 @@ def create_app(config: Config) -> Litestar:
     # ------------------------------------------------------------------
 
     registry = CollectorRegistry()
+    # Final-review IMPORTANT 5: metric NAMES and LABEL NAMES now match the
+    # oracle's actix_web_prom schema exactly (oracle-verified via /metrics on
+    # the Rust reference: `ltengine_http_requests_total{endpoint,method,
+    # status}` / `ltengine_http_requests_duration_seconds{endpoint,method,
+    # status}`), so an actix_web_prom-shaped dashboard is a drop-in over
+    # either binary. `endpoint` replaces the old `path` label name only — the
+    # VALUE it carries is unchanged (still the canonical/bounded label from
+    # `_resolve_static_path` or `path_template`, never the raw request path;
+    # see `__call__` below). The histogram buckets stay our own (amended,
+    # LLM-latency-appropriate) set, not actix_web_prom's tiny sub-10s
+    # defaults — only the name/labels are adopted, not the bucket boundaries.
     requests_total = Counter(
-        "ltengine_requests_total",
-        "Total HTTP requests",
-        ["method", "path", "status"],
+        "ltengine_http_requests_total",
+        "Total number of HTTP requests",
+        ["endpoint", "method", "status"],
         registry=registry,
     )
     request_duration_seconds = Histogram(
-        "ltengine_request_duration_seconds",
-        "HTTP request duration in seconds",
-        ["method"],
+        "ltengine_http_requests_duration_seconds",
+        "HTTP request duration in seconds for all requests",
+        ["endpoint", "method", "status"],
         buckets=(0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, float("inf")),
         registry=registry,
     )
@@ -260,10 +353,21 @@ def create_app(config: Config) -> Litestar:
 
     @get("/metrics", name="metrics")
     async def metrics() -> Response:
+        # Minor 6: CONTENT_TYPE_LATEST ("text/plain; version=0.0.4;
+        # charset=utf-8") already carries its own charset param. Passing it
+        # as `media_type=` let ASGIResponse's `setdefault` treat it as a bare
+        # "text/plain"-family type and APPEND a second "; charset=utf-8" —
+        # doubled. Passing it via `headers=` instead pre-empts that
+        # setdefault (the key is already present), so the header lands
+        # exactly as CONTENT_TYPE_LATEST, once — matches the oracle's
+        # `text/plain; version=0.0.4; charset=utf-8` exactly. `content` is
+        # already `bytes` (`generate_latest`), so `Response.render` passes it
+        # through unconditionally regardless of `media_type` — no
+        # serialization ever depended on `media_type` being set here.
         return Response(
             content=generate_latest(registry),
             status_code=HTTP_200_OK,
-            media_type=CONTENT_TYPE_LATEST,
+            headers={"content-type": CONTENT_TYPE_LATEST},
         )
 
     # ------------------------------------------------------------------
@@ -310,7 +414,17 @@ def create_app(config: Config) -> Litestar:
 
             method: str = scope.get("method", "UNKNOWN")  # type: ignore[assignment]
             path: str = scope.get("path", "/")  # type: ignore[assignment]
-            resolved = _resolve_static_path(path)
+            # Final-review CRITICAL 1: an EXACT match against one of the 8
+            # real API paths is the ONLY case that still delegates to
+            # Litestar's own router — every other path (a trailing slash on
+            # an API path, any other unmatched path) is now fully OWNED here
+            # and never reaches Litestar's routing at all, so its
+            # trailing-slash normalization (which used to silently
+            # 200-translate `POST /translate/`) can never fire.
+            # `_resolve_static_path` only needs to run for the non-exact
+            # case — an exact API path is never a candidate static asset.
+            is_exact_api_path = path in _API_PATHS
+            resolved = None if is_exact_api_path else _resolve_static_path(path)
 
             start_time = time.perf_counter()
             status_code = 500  # default to 500 if an exception occurs
@@ -348,22 +462,38 @@ def create_app(config: Config) -> Litestar:
                         # Same static-file-service fallback as Litestar's own
                         # routed 405 (Task 6) — oracle-verified identical
                         # body/headers for a non-GET/HEAD hit on root or a
-                        # real asset. Reuses the same constants; never a
-                        # second hand-built variant.
-                        asgi_response = ASGIResponse(
-                            body=_METHOD_NOT_ALLOWED_BODY,
-                            media_type="text/plain",
-                            status_code=HTTP_405_METHOD_NOT_ALLOWED,
-                            headers=_METHOD_NOT_ALLOWED_HEADERS,
-                        )
+                        # real asset. Reuses the same builder; never a second
+                        # hand-built variant.
+                        asgi_response = _method_not_allowed_asgi_response()
                     await asgi_response(scope, receive, send_with_metrics)  # type: ignore[arg-type]
-                else:
+                elif is_exact_api_path:
                     await super().__call__(scope, receive, send_with_metrics)  # type: ignore[arg-type]
+                else:
+                    # Final-review CRITICAL 1/2: everything reaching here is
+                    # a path Rust's actix router never matches either — it
+                    # falls through to the embedded static-file service,
+                    # whose method guard (GET/HEAD only) decides the shape:
+                    # GET/HEAD -> the pinned "Not found" 404 (oracle-verified
+                    # for both a plain unmatched path AND a wrong-method
+                    # GET/HEAD against a real API path, e.g. `GET
+                    # /translate`, a POST-only route — that case instead
+                    # reaches `_method_not_allowed_handler` below, which
+                    # builds the identical response); anything else -> the
+                    # pinned generic 405. Built through the exact same
+                    # builders the static-hit branch above uses, so the two
+                    # can never drift.
+                    if method in ("GET", "HEAD"):
+                        asgi_response = _not_found_asgi_response(is_head=method == "HEAD")
+                    else:
+                        asgi_response = _method_not_allowed_asgi_response()
+                    await asgi_response(scope, receive, send_with_metrics)  # type: ignore[arg-type]
             finally:
                 duration = time.perf_counter() - start_time
                 path_label = static_path_label or scope.get("path_template") or "__unmatched__"
-                requests_total.labels(method=method, path=path_label, status=status_code).inc()
-                request_duration_seconds.labels(method=method).observe(duration)
+                requests_total.labels(endpoint=path_label, method=method, status=status_code).inc()
+                request_duration_seconds.labels(
+                    endpoint=path_label, method=method, status=status_code
+                ).observe(duration)
 
     return _LTEngineApp(
         route_handlers=[

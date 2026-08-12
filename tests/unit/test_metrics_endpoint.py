@@ -16,16 +16,26 @@ def test_metrics_endpoint_present() -> None:
         r = client.get("/metrics")
         assert r.status_code == 200
         assert r.headers["content-type"].startswith("text/plain")
-        assert "ltengine_requests_total" in r.text
+        # No doubled charset (Minor 6): CONTENT_TYPE_LATEST already carries
+        # its own "; charset=utf-8" -- it must appear exactly once.
+        assert r.headers["content-type"].count("charset=") == 1
+        # Final-review IMPORTANT 5: metric name matches the oracle's
+        # actix_web_prom schema (`ltengine_http_requests_total`), not the
+        # prior ad hoc `ltengine_requests_total`.
+        assert "ltengine_http_requests_total" in r.text
+        assert "ltengine_http_requests_duration_seconds" in r.text
 
 
 def _counter_value(text: str, *, method: str, path: str, status: str) -> float | None:
-    """Read the current value of one `ltengine_requests_total` series from a
-    `/metrics` scrape body. Label order matches the Counter's declared
-    label names (method, path, status)."""
+    """Read the current value of one `ltengine_http_requests_total` series
+    from a `/metrics` scrape body. Label order matches the Counter's
+    declared label names (endpoint, method, status) -- `path` here is a
+    (local) label VALUE, not a label NAME: `endpoint` replaced `path` as the
+    label name in the final-review IMPORTANT 5 schema adoption, oracle-
+    verified to match actix_web_prom exactly."""
     m = re.search(
-        rf'ltengine_requests_total\{{method="{re.escape(method)}",'
-        rf'path="{re.escape(path)}",status="{re.escape(status)}"\}} ([0-9.]+)',
+        rf'ltengine_http_requests_total\{{endpoint="{re.escape(path)}",'
+        rf'method="{re.escape(method)}",status="{re.escape(status)}"\}} ([0-9.]+)',
         text,
     )
     return float(m.group(1)) if m else None

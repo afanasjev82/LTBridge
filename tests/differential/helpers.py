@@ -22,6 +22,7 @@ _UPSTREAM_URL_RE = re.compile(rb"http://127\.0\.0\.1:\d+")
 class Snapshot:
     status: int
     content_type: str
+    content_type_present: bool
     body: bytes
     chunked: bool
     leading_spaces: int
@@ -39,6 +40,13 @@ def _snap(resp: httpx.Response) -> Snapshot:
     return Snapshot(
         status=resp.status_code,
         content_type=resp.headers.get("content-type", "").split(";")[0].strip(),
+        # Final-review guard (Minor 7 / ledger T6-5): "" from the line above
+        # can mean EITHER "the header is absent" OR "the header is present
+        # with an empty value" — indistinguishable from `content_type` alone.
+        # A 404's content-type header must be truly ABSENT (actix's bare
+        # `HttpResponse::NotFound()` never sets one), not merely empty; this
+        # field lets `assert_parity` catch the difference.
+        content_type_present="content-type" in resp.headers,
         body=body,
         chunked=resp.headers.get("transfer-encoding", "") == "chunked",
         leading_spaces=leading,
@@ -65,6 +73,9 @@ def assert_parity(rust: Snapshot, py: Snapshot, *, normalize_heartbeat: bool = F
     assert py.status == rust.status, f"status: py={py.status} rust={rust.status}"
     assert py.content_type == rust.content_type, (
         f"content-type: py={py.content_type!r} rust={rust.content_type!r}")
+    assert py.content_type_present == rust.content_type_present, (
+        f"content-type presence: py={py.content_type_present} rust={rust.content_type_present}"
+    )
     if normalize_heartbeat:
         # Heartbeat space count is timing-jittery; require both chunked with >=1 space,
         # then compare the JSON payloads exactly.

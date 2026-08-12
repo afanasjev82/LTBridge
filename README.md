@@ -37,7 +37,7 @@ Fully compatible with the [LibreTranslate API](https://libretranslate.com/docs/)
 | `/languages` | GET | List supported languages |
 | `/health` | GET | Health check |
 | `/frontend/settings` | GET | Frontend config |
-| `/metrics` | GET | Prometheus metrics (`ltengine_*`) |
+| `/metrics` | GET | Prometheus metrics (`ltengine_http_requests_total`, `ltengine_http_requests_duration_seconds` — actix_web_prom-compatible schema) |
 
 ### Translate
 
