@@ -16,6 +16,7 @@ import httpx
 from litestar import Litestar, Request, Response, get, post
 from litestar.datastructures import State
 from litestar.exceptions import MethodNotAllowedException, NotFoundException
+from litestar.response.base import ASGIResponse
 from litestar.status_codes import (
     HTTP_200_OK,
     HTTP_400_BAD_REQUEST,
@@ -24,7 +25,7 @@ from litestar.status_codes import (
     HTTP_405_METHOD_NOT_ALLOWED,
     HTTP_501_NOT_IMPLEMENTED,
 )
-from litestar.types import ASGIApp, Receive, Scope, Send
+from litestar.types import LifeSpanReceive, LifeSpanScope, LifeSpanSend, Receive, Scope, Send
 from ltengine_frontend import get_static_dir
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
@@ -588,86 +589,23 @@ def create_app(config: Config) -> Litestar:
         )
 
     # ------------------------------------------------------------------
-    # Metrics middleware (track requests)
+    # Static file resolution (serves the frontend UI off disk)
     # ------------------------------------------------------------------
 
-    class MetricsMiddleware:
-        """Track HTTP requests and responses with Prometheus metrics."""
-
-        def __init__(self, app: ASGIApp) -> None:
-            self.app = app
-
-        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-            if scope["type"] != "http":
-                await self.app(scope, receive, send)
-                return
-
-            method: str = scope.get("method", "UNKNOWN")  # type: ignore[assignment]
-            path: str = scope.get("path_template", scope.get("path", "/"))  # type: ignore[assignment]
-            start_time = time.perf_counter()
-            status_code = 500  # default to 500 if an exception occurs
-
-            async def send_with_metrics(message: dict[str, Any]) -> None:
-                nonlocal status_code
-                if message["type"] == "http.response.start":
-                    status_code = message["status"]
-                await send(message)  # type: ignore[arg-type]
-
-            try:
-                await self.app(scope, receive, send_with_metrics)  # type: ignore[arg-type]
-            finally:
-                # Record metrics
-                duration = time.perf_counter() - start_time
-                requests_total.labels(method=method, path=path, status=status_code).inc()
-                request_duration_seconds.labels(method=method).observe(duration)
-
-    # ------------------------------------------------------------------
-    # Static file middleware (serves frontend UI)
-    # ------------------------------------------------------------------
-
-    class StaticFilesMiddleware:
-        """Serve static files for any path not matched by an API route."""
-
-        def __init__(self, app: ASGIApp) -> None:
-            self.app = app
-
-        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-            if scope["type"] != "http":
-                await self.app(scope, receive, send)
-                return
-
-            path: str = scope.get("path", "/")
-            # API routes handled by Litestar — only catch root and unknown paths
-            api_prefixes = (
-                "/translate",
-                "/detect",
-                "/languages",
-                "/health",
-                "/frontend",
-                "/suggest",
-                "/metrics",
-            )
-            if path == "/" or not any(path.startswith(p) for p in api_prefixes):
-                # Serve index.html for root; for everything else try the file
-                if path == "/":
-                    file_path = static_dir / "index.html"
-                else:
-                    candidate = static_dir / path.lstrip("/")
-                    file_path = candidate if candidate.exists() else static_dir / "index.html"
-
-                if file_path.exists():
-                    content = file_path.read_bytes()
-                    mime = _guess_mime(file_path.suffix)
-                    response = Response(
-                        content=content,
-                        media_type=mime,
-                        status_code=200,
-                    )
-                    # Response implements the ASGI interface (callable); mypy doesn't recognize this.
-                    await response(scope, receive, send)  # type: ignore[operator]
-                    return
-
-            await self.app(scope, receive, send)
+    # The routes Litestar itself owns — static resolution never shadows one
+    # of these, even if a same-named file were ever added under static_dir.
+    _API_PATHS = frozenset(
+        {
+            "/health",
+            "/languages",
+            "/frontend/settings",
+            "/detect",
+            "/translate",
+            "/translate_file",
+            "/suggest",
+            "/metrics",
+        }
+    )
 
     def _guess_mime(suffix: str) -> str:
         return {
@@ -680,7 +618,103 @@ def create_app(config: Config) -> Litestar:
             ".svg": "image/svg+xml",
         }.get(suffix.lower(), "application/octet-stream")
 
-    return Litestar(
+    def _resolve_static(method: str, path: str) -> tuple[bytes, str] | None:
+        """Resolve a GET request to a real static asset, or ``None``.
+
+        ``index.html`` is served ONLY at ``/`` — parity fix for the bug this
+        task closes (every other path used to fall back to ``index.html``
+        too, so nothing outside the API ever 404'd). Any other path is
+        served iff a real file exists under ``static_dir`` — resolved and
+        bounds-checked against path traversal — else ``None``, so the caller
+        falls through to Litestar's own routing and its Task 6 404/405
+        handlers instead of inventing a response.
+        """
+        if method != "GET" or path in _API_PATHS:
+            return None
+
+        if path == "/":
+            file_path = static_dir / "index.html"
+        else:
+            candidate = (static_dir / path.lstrip("/")).resolve()
+            if not candidate.is_relative_to(static_dir.resolve()):
+                return None
+            file_path = candidate
+
+        if not file_path.is_file():
+            return None
+        return file_path.read_bytes(), _guess_mime(file_path.suffix)
+
+    # ------------------------------------------------------------------
+    # Outer ASGI layer: static-file serving + request metrics
+    # ------------------------------------------------------------------
+    #
+    # Litestar's own `middleware=[...]` is wired PER MATCHED ROUTE (each
+    # handler's "ownership layer" stack), never as a true wrapper around the
+    # whole app — confirmed empirically (Task 6/Task 10): a routing-level
+    # `NotFoundException`/`MethodNotAllowedException` (unmatched path, wrong
+    # method) is raised and turned into a response by Litestar's own
+    # exception-handling layer BEFORE any per-route middleware ever runs, so
+    # per-route middleware never sees it. That made the old
+    # `StaticFilesMiddleware` dead code for exactly the paths it existed to
+    # handle (root `/` and unknown paths — both always unmatched), and made
+    # `ltengine_requests_total` blind to every routing-level 404/405.
+    #
+    # The fix is a genuine outer layer: override `Litestar.__call__` itself
+    # (the actual outermost ASGI entry point) on a thin subclass, rather than
+    # adding a second parallel mechanism alongside it. This runs BEFORE
+    # routing for every HTTP request, so it can (a) serve a real static file
+    # straight off disk without ever entering Litestar's router, and (b)
+    # always record exactly one metrics observation per request — the
+    # route's `path_template` when routing succeeded, and a fixed, bounded
+    # `"__unmatched__"` sentinel when it didn't (never the raw request path,
+    # which is attacker-controlled and would blow up label cardinality).
+    class _LTEngineApp(Litestar):
+        async def __call__(
+            self,
+            scope: Scope | LifeSpanScope,
+            receive: Receive | LifeSpanReceive,
+            send: Send | LifeSpanSend,
+        ) -> None:
+            if scope["type"] != "http":
+                await super().__call__(scope, receive, send)
+                return
+
+            method: str = scope.get("method", "UNKNOWN")  # type: ignore[assignment]
+            path: str = scope.get("path", "/")  # type: ignore[assignment]
+            static = _resolve_static(method, path)
+
+            start_time = time.perf_counter()
+            status_code = 500  # default to 500 if an exception occurs
+            # Static hits are bounded by static_dir's real contents (an
+            # admin-controlled, finite set) so the actual path is safe to
+            # use as a label; a routing miss falls back to the sentinel.
+            static_path_label = path if static is not None else None
+
+            async def send_with_metrics(message: dict[str, Any]) -> None:
+                nonlocal status_code
+                if message["type"] == "http.response.start":
+                    status_code = message["status"]
+                await send(message)  # type: ignore[arg-type]
+
+            try:
+                if static is not None:
+                    content, mime = static
+                    # The low-level ASGIResponse (unlike the high-level `Response`
+                    # used elsewhere in this module) is directly ASGI-callable and
+                    # needs no `Request`/app context to render fixed bytes.
+                    asgi_response = ASGIResponse(
+                        body=content, media_type=mime, status_code=HTTP_200_OK
+                    )
+                    await asgi_response(scope, receive, send_with_metrics)  # type: ignore[arg-type]
+                else:
+                    await super().__call__(scope, receive, send_with_metrics)  # type: ignore[arg-type]
+            finally:
+                duration = time.perf_counter() - start_time
+                path_label = static_path_label or scope.get("path_template") or "__unmatched__"
+                requests_total.labels(method=method, path=path_label, status=status_code).inc()
+                request_duration_seconds.labels(method=method).observe(duration)
+
+    return _LTEngineApp(
         route_handlers=[
             health,
             languages,
@@ -691,7 +725,6 @@ def create_app(config: Config) -> Litestar:
             suggest,
             metrics,
         ],
-        middleware=[MetricsMiddleware, StaticFilesMiddleware],
         lifespan=[lifespan],
         debug=config.verbose,
         exception_handlers={
