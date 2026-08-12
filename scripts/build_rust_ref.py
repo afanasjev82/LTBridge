@@ -3,30 +3,36 @@
 Never touches the main LTEngine working tree's checked-out branch.
 Idempotent: safe to re-run; prints the binary path on success.
 
-Cross-platform (Windows native + WSL/Linux): the LTEngine repo path and the
-`.rust-ref` worktree's git usability differ by platform.
+Cross-platform (Windows native + WSL/Linux, the canonical build environment):
+the LTEngine repo path and the `.rust-ref` worktree's git usability differ by
+platform.
 
 - Windows: `.rust-ref` is a normal worktree (gitdir points at a Windows path
   under the main LTEngine repo's `.git/worktrees/`) - checkout/pull/rev-parse
   all work directly against it, as before.
-- Linux/WSL: a `.rust-ref` worktree created *on Windows* has a gitdir pointer
-  file containing a `W:/...` path, which is not a valid path under Linux, so
-  `git -C .rust-ref ...` fails with "not a git repository". When that
-  happens on an *existing* worktree, we tolerate it with a warning and carry
-  on: the checked-out source tree is a valid pinned snapshot regardless of
-  whether git itself can currently introspect it from this OS, and `cargo
-  build` only needs the files on disk. To still report which commit is
-  pinned, we ask the *main* LTEngine repo (a normal, non-worktree git dir,
-  fully usable from either OS) to resolve REF_BRANCH instead of asking the
-  worktree to resolve its own HEAD - worktrees share refs/objects with the
-  main repo, so `git -C <main repo> rev-parse REF_BRANCH` returns the exact
-  commit the worktree has checked out.
+- Linux/WSL: a worktree's gitdir pointer must be Linux-format to be usable by
+  git. A `.rust-ref` worktree created *on Windows* has a gitdir pointer file
+  containing a `W:/...` path, which git cannot resolve under Linux -
+  `git -C .rust-ref ...` fails with "not a git repository". The old behavior
+  tolerated that on an existing worktree and asked the *main* LTEngine repo
+  to resolve REF_BRANCH's tip instead of the worktree's own HEAD - but the
+  main repo's tip moves independently of a worktree that checkout/pull can
+  never actually refresh (both silently no-op on the broken pointer), so the
+  printed "reference:" hash could quietly diverge from what was really
+  built. Instead we self-heal: prune the broken worktree registration and
+  recreate it via WSL git, producing Linux-native pointers so checkout/pull/
+  rev-parse all work for real from then on, and the printed hash is always
+  read from the worktree itself. A tolerated-failure fallback remains only
+  for when self-heal itself cannot run; it marks its output as stale rather
+  than pretending to be current.
 """
 
 from __future__ import annotations
 
 import os
 import platform
+import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -40,6 +46,7 @@ LTENGINE_REPO = (
 )
 REF_DIR = REPO_ROOT / ".rust-ref"
 REF_BRANCH = "development"
+_WINDOWS_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 
 def run(cmd: list[str], cwd: Path | None = None) -> None:
@@ -62,56 +69,107 @@ def try_run(cmd: list[str], cwd: Path | None = None) -> bool:
 
 
 def resolve_head() -> str:
-    """Best-effort short commit hash of the worktree's checked-out HEAD."""
-    if IS_WINDOWS:
-        out = subprocess.run(
-            ["git", "-C", str(REF_DIR), "rev-parse", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return out.stdout.strip()
-    # Linux: the worktree's own gitdir pointer is a Windows path and won't
-    # resolve here. Ask the main repo for REF_BRANCH's tip instead - it
-    # shares objects/refs with the worktree, so this is the same commit.
+    """Short commit hash of the worktree's own checked-out HEAD.
+
+    Always asked of REF_DIR itself, never the main repo: the printed
+    reference must be the commit that was actually built, not the main
+    repo's live branch tip, which can move independently of a worktree that
+    was never actually refreshed.
+    """
     out = subprocess.run(
-        ["git", "-C", str(LTENGINE_REPO), "rev-parse", "--short", REF_BRANCH],
+        ["git", "-C", str(REF_DIR), "rev-parse", "--short", "HEAD"],
         capture_output=True,
         text=True,
         check=False,
     )
     if out.returncode == 0:
         return out.stdout.strip()
-    print(
-        f"WARNING: could not resolve HEAD via either the worktree or the main repo: {out.stderr.strip()}"
-    )
+    print(f"WARNING: could not resolve the worktree's own HEAD: {out.stderr.strip()}")
     return "unknown"
+
+
+def _worktree_usable() -> bool:
+    """True if `git -C REF_DIR ...` genuinely works (gitdir pointer is native)."""
+    result = subprocess.run(
+        ["git", "-C", str(REF_DIR), "rev-parse", "--is-inside-work-tree"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+def _gitdir_pointer() -> str | None:
+    """Raw target of REF_DIR/.git ('gitdir: <path>'), or None if unreadable."""
+    git_file = REF_DIR / ".git"
+    if not git_file.is_file():
+        return None
+    text = git_file.read_text(encoding="utf-8", errors="replace").strip()
+    prefix = "gitdir:"
+    if not text.startswith(prefix):
+        return None
+    return text[len(prefix) :].strip()
+
+
+def _self_heal_worktree() -> bool:
+    """Recreate REF_DIR as a Linux-native worktree. Returns True on success.
+
+    The existing worktree's gitdir pointer is a Windows path, so neither
+    `git worktree remove` (it refuses: the pointer isn't a valid absolute
+    path from here) nor plain checkout/pull can touch it. Deleting the
+    working directory first makes it unambiguously prunable from any OS,
+    then a fresh `worktree add` from WSL git writes Linux-native pointers.
+    """
+    print(
+        f"WARNING: {REF_DIR} is not usable from this OS (Windows-format gitdir "
+        "pointer) - self-healing by recreating the worktree via WSL git."
+    )
+    if REF_DIR.exists():
+        shutil.rmtree(REF_DIR)
+    try_run(["git", "-C", str(LTENGINE_REPO), "worktree", "prune"])
+    ok = try_run(["git", "-C", str(LTENGINE_REPO), "worktree", "add", str(REF_DIR), REF_BRANCH])
+    if ok and _worktree_usable():
+        print(f"Self-heal OK: {REF_DIR} is now a Linux-native worktree.")
+        return True
+    print("WARNING: self-heal failed; falling back to a tolerated-failure, stale read.")
+    return False
+
+
+def _checkout_and_pull() -> None:
+    run(["git", "-C", str(REF_DIR), "checkout", REF_BRANCH])
+    run(["git", "-C", str(REF_DIR), "pull", "--ff-only"])
 
 
 def main() -> int:
     if not LTENGINE_REPO.exists():
         print(f"ERROR: Rust repo not found at {LTENGINE_REPO}", file=sys.stderr)
         return 1
+
+    stale = False
     if not REF_DIR.exists():
         run(["git", "-C", str(LTENGINE_REPO), "worktree", "add", str(REF_DIR), REF_BRANCH])
     elif IS_WINDOWS:
-        run(["git", "-C", str(REF_DIR), "checkout", REF_BRANCH])
-        run(["git", "-C", str(REF_DIR), "pull", "--ff-only"])
-    else:
-        # Existing worktree, but its gitdir pointer is a Windows path under
-        # WSL - tolerate the failure. The checked-out source is a valid
-        # pinned snapshot; cargo only needs the files.
-        ok = try_run(["git", "-C", str(REF_DIR), "checkout", REF_BRANCH])
-        if ok:
-            try_run(["git", "-C", str(REF_DIR), "pull", "--ff-only"])
-        else:
+        pointer = _gitdir_pointer()
+        if pointer and not _WINDOWS_PATH_RE.match(pointer):
             print(
-                "WARNING: .rust-ref's worktree git metadata is not usable from this OS "
-                "(gitdir points at a Windows path); using the source tree as-is."
+                f"ERROR: {REF_DIR} is a WSL-owned worktree (gitdir points at "
+                f"'{pointer}', not a Windows path). Run this script under WSL, "
+                "or delete .rust-ref and let Windows recreate it.",
+                file=sys.stderr,
             )
+            return 1
+        _checkout_and_pull()
+    elif _worktree_usable() or _self_heal_worktree():
+        _checkout_and_pull()
+    else:
+        stale = True
 
     head = resolve_head()
-    print(f"reference: LTEngine@{REF_BRANCH} {head}")
+    if stale:
+        print(f"reference: LTEngine@{REF_BRANCH} {head} (STALE - refresh failed)")
+    else:
+        print(f"reference: LTEngine@{REF_BRANCH} {head}")
 
     target_dir = (
         Path(os.environ["CARGO_TARGET_DIR"])
