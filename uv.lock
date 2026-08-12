@@ -466,6 +466,7 @@ dependencies = [
     { name = "httpx" },
     { name = "litestar", extra = ["standard"] },
     { name = "ltengine-frontend" },
+    { name = "prometheus-client" },
     { name = "whatlang-py" },
 ]
 
@@ -486,6 +487,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "litestar", extras = ["standard"], specifier = ">=2.19.0" },
     { name = "ltengine-frontend", editable = "frontend" },
+    { name = "prometheus-client", specifier = ">=0.20" },
     { name = "whatlang-py", editable = "whatlang-py" },
 ]
 
