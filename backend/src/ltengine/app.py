@@ -251,6 +251,93 @@ def _check_params(body: dict[str, Any], config: Config, required: list[str]) -> 
 
 
 # ---------------------------------------------------------------------------
+# Static file resolution (serves the frontend UI off disk)
+# ---------------------------------------------------------------------------
+
+_STATIC_DIR: Path = get_static_dir()
+_STATIC_ROOT: Path = _STATIC_DIR.resolve()  # cached once — never re-resolved per request
+
+# The routes Litestar itself owns — static resolution never shadows one of
+# these, even via a trailing slash (e.g. "/translate/"). This is an
+# EXACT-match exclusion (own path, or own path with a trailing slash
+# stripped), not a prefix check: "/translate/x" isn't a real route either
+# way, so it isn't specially excluded — it just won't resolve to a file and
+# falls through to Litestar's routing like any other miss.
+_API_PATHS = frozenset(
+    {
+        "/health",
+        "/languages",
+        "/frontend/settings",
+        "/detect",
+        "/translate",
+        "/translate_file",
+        "/suggest",
+        "/metrics",
+    }
+)
+
+# Task 6's oracle-pinned generic 405 (actix-web-static-files' method guard:
+# GET/HEAD only, identical body/headers regardless of which route or path was
+# actually hit — oracle-verified again here for the static surface itself:
+# POST / and POST on a real asset both 405 with this exact body). Shared
+# between the routed-405 exception handler below and the static-surface 405
+# path in `create_app` (Task 11 fix wave 2) so the two can never drift apart.
+_METHOD_NOT_ALLOWED_BODY = "This resource only supports GET and HEAD."
+_METHOD_NOT_ALLOWED_HEADERS = {"allow": "GET, HEAD"}
+
+
+def _guess_mime(suffix: str) -> str:
+    return {
+        ".html": "text/html",
+        ".js": "application/javascript",
+        ".css": "text/css",
+        ".json": "application/json",
+        ".png": "image/png",
+        ".ico": "image/x-icon",
+        ".svg": "image/svg+xml",
+    }.get(suffix.lower(), "application/octet-stream")
+
+
+def _resolve_static_path(path: str) -> tuple[Path, str] | None:
+    """Resolve a request PATH — independent of method — to a real static
+    asset. Returns ``(file_path, canonical_label)`` on a hit, else ``None``.
+
+    ``canonical_label`` is the path actually SERVED — derived from the
+    resolved file's location relative to ``_STATIC_ROOT`` — never the raw
+    request path. Aliasing forms of the same request (extra slashes, a "."
+    segment, an encoded ".." that survives client-side URL normalization)
+    must collapse to exactly ONE Prometheus label, or an attacker can mint
+    unbounded label cardinality for free by varying the raw path. Root ``/``
+    is labeled ``"/"`` specifically — kept distinct from an explicit
+    ``/index.html`` request even though both currently serve the same file;
+    a deliberate, documented choice, not an oversight.
+
+    ``index.html`` is served ONLY at ``/``. Every other path is served iff a
+    real file exists under ``_STATIC_DIR`` — resolved and bounds-checked
+    against path traversal. Method-agnostic on purpose: the caller decides
+    what a GET, HEAD, or any other method does with a hit (parity: Rust's
+    embedded static-file service 200s GET/HEAD and 405s everything else on
+    the exact same path set, so both outcomes need the same resolution).
+    """
+    if path in _API_PATHS or path.rstrip("/") in _API_PATHS:
+        return None
+
+    if path == "/":
+        file_path = _STATIC_DIR / "index.html"
+        canonical = "/"
+    else:
+        candidate = (_STATIC_DIR / path.lstrip("/")).resolve()
+        if not candidate.is_relative_to(_STATIC_ROOT):
+            return None
+        file_path = candidate
+        canonical = "/" + file_path.relative_to(_STATIC_ROOT).as_posix()
+
+    if not file_path.is_file():
+        return None
+    return file_path, canonical
+
+
+# ---------------------------------------------------------------------------
 # App-level exception handlers — every non-2xx body Litestar's own machinery
 # would otherwise shape as ``{"status_code": ..., "detail": ...}`` is
 # re-shaped here to match the observed Rust (actix) output byte-for-byte.
@@ -287,10 +374,10 @@ def _method_not_allowed_handler(
     # GET/HEAD) rejects first: actix-web-static-files' generic 405, always
     # "GET and HEAD" regardless of which route/method was actually intended.
     return Response(
-        content="This resource only supports GET and HEAD.",
+        content=_METHOD_NOT_ALLOWED_BODY,
         status_code=HTTP_405_METHOD_NOT_ALLOWED,
         media_type="text/plain",
-        headers={"allow": "GET, HEAD"},
+        headers=_METHOD_NOT_ALLOWED_HEADERS,
     )
 
 
@@ -304,7 +391,6 @@ def create_app(config: Config) -> Litestar:
 
     llm_client: LLMClient | None = None
     http_client: httpx.AsyncClient | None = None
-    static_dir: Path = get_static_dir()
 
     @asynccontextmanager
     async def lifespan(app: Litestar):
@@ -589,62 +675,6 @@ def create_app(config: Config) -> Litestar:
         )
 
     # ------------------------------------------------------------------
-    # Static file resolution (serves the frontend UI off disk)
-    # ------------------------------------------------------------------
-
-    # The routes Litestar itself owns — static resolution never shadows one
-    # of these, even if a same-named file were ever added under static_dir.
-    _API_PATHS = frozenset(
-        {
-            "/health",
-            "/languages",
-            "/frontend/settings",
-            "/detect",
-            "/translate",
-            "/translate_file",
-            "/suggest",
-            "/metrics",
-        }
-    )
-
-    def _guess_mime(suffix: str) -> str:
-        return {
-            ".html": "text/html",
-            ".js": "application/javascript",
-            ".css": "text/css",
-            ".json": "application/json",
-            ".png": "image/png",
-            ".ico": "image/x-icon",
-            ".svg": "image/svg+xml",
-        }.get(suffix.lower(), "application/octet-stream")
-
-    def _resolve_static(method: str, path: str) -> tuple[bytes, str] | None:
-        """Resolve a GET request to a real static asset, or ``None``.
-
-        ``index.html`` is served ONLY at ``/`` — parity fix for the bug this
-        task closes (every other path used to fall back to ``index.html``
-        too, so nothing outside the API ever 404'd). Any other path is
-        served iff a real file exists under ``static_dir`` — resolved and
-        bounds-checked against path traversal — else ``None``, so the caller
-        falls through to Litestar's own routing and its Task 6 404/405
-        handlers instead of inventing a response.
-        """
-        if method != "GET" or path in _API_PATHS:
-            return None
-
-        if path == "/":
-            file_path = static_dir / "index.html"
-        else:
-            candidate = (static_dir / path.lstrip("/")).resolve()
-            if not candidate.is_relative_to(static_dir.resolve()):
-                return None
-            file_path = candidate
-
-        if not file_path.is_file():
-            return None
-        return file_path.read_bytes(), _guess_mime(file_path.suffix)
-
-    # ------------------------------------------------------------------
     # Outer ASGI layer: static-file serving + request metrics
     # ------------------------------------------------------------------
     #
@@ -663,11 +693,18 @@ def create_app(config: Config) -> Litestar:
     # (the actual outermost ASGI entry point) on a thin subclass, rather than
     # adding a second parallel mechanism alongside it. This runs BEFORE
     # routing for every HTTP request, so it can (a) serve a real static file
-    # straight off disk without ever entering Litestar's router, and (b)
-    # always record exactly one metrics observation per request — the
-    # route's `path_template` when routing succeeded, and a fixed, bounded
-    # `"__unmatched__"` sentinel when it didn't (never the raw request path,
-    # which is attacker-controlled and would blow up label cardinality).
+    # straight off disk without ever entering Litestar's router — GET gets
+    # the full body; HEAD gets an empty body with the SAME Content-Length a
+    # GET would carry (oracle-verified: Rust's HEAD `/` and HEAD on a real
+    # asset both report the full content-length and content-type, no body);
+    # any other method gets the Task 6 oracle-pinned generic 405
+    # (oracle-verified: identical body/headers to the routed 405 case) — and
+    # (b) always record exactly one metrics observation per request, using
+    # `_resolve_static_path`'s canonical (bounded) label for a static hit or
+    # static-surface 405, the route's `path_template` when Litestar's own
+    # routing succeeded, or a fixed `"__unmatched__"` sentinel when none of
+    # those resolved (never the raw request path, which is attacker-
+    # controlled and would blow up label cardinality on its own).
     class _LTEngineApp(Litestar):
         async def __call__(
             self,
@@ -681,14 +718,11 @@ def create_app(config: Config) -> Litestar:
 
             method: str = scope.get("method", "UNKNOWN")  # type: ignore[assignment]
             path: str = scope.get("path", "/")  # type: ignore[assignment]
-            static = _resolve_static(method, path)
+            resolved = _resolve_static_path(path)
 
             start_time = time.perf_counter()
             status_code = 500  # default to 500 if an exception occurs
-            # Static hits are bounded by static_dir's real contents (an
-            # admin-controlled, finite set) so the actual path is safe to
-            # use as a label; a routing miss falls back to the sentinel.
-            static_path_label = path if static is not None else None
+            static_path_label = resolved[1] if resolved is not None else None
 
             async def send_with_metrics(message: dict[str, Any]) -> None:
                 nonlocal status_code
@@ -697,14 +731,39 @@ def create_app(config: Config) -> Litestar:
                 await send(message)  # type: ignore[arg-type]
 
             try:
-                if static is not None:
-                    content, mime = static
-                    # The low-level ASGIResponse (unlike the high-level `Response`
-                    # used elsewhere in this module) is directly ASGI-callable and
-                    # needs no `Request`/app context to render fixed bytes.
-                    asgi_response = ASGIResponse(
-                        body=content, media_type=mime, status_code=HTTP_200_OK
-                    )
+                if resolved is not None:
+                    file_path, _canonical = resolved
+                    if method in ("GET", "HEAD"):
+                        content = file_path.read_bytes()
+                        mime = _guess_mime(file_path.suffix)
+                        is_head = method == "HEAD"
+                        # ASGIResponse's `is_head_response=True` path forbids
+                        # a non-empty body outright AND skips setting
+                        # content-type/content-length entirely — neither
+                        # matches the oracle (HEAD carries the same
+                        # Content-Length a GET would). So HEAD is built as an
+                        # ordinary 200 with an empty body and an EXPLICIT
+                        # content-length header (added via `headers=`, which
+                        # the auto-length `setdefault` below then leaves
+                        # alone since the key is already present).
+                        asgi_response = ASGIResponse(
+                            body=b"" if is_head else content,
+                            media_type=mime,
+                            status_code=HTTP_200_OK,
+                            headers={"content-length": str(len(content))} if is_head else None,
+                        )
+                    else:
+                        # Same static-file-service fallback as Litestar's own
+                        # routed 405 (Task 6) — oracle-verified identical
+                        # body/headers for a non-GET/HEAD hit on root or a
+                        # real asset. Reuses the same constants; never a
+                        # second hand-built variant.
+                        asgi_response = ASGIResponse(
+                            body=_METHOD_NOT_ALLOWED_BODY,
+                            media_type="text/plain",
+                            status_code=HTTP_405_METHOD_NOT_ALLOWED,
+                            headers=_METHOD_NOT_ALLOWED_HEADERS,
+                        )
                     await asgi_response(scope, receive, send_with_metrics)  # type: ignore[arg-type]
                 else:
                     await super().__call__(scope, receive, send_with_metrics)  # type: ignore[arg-type]
