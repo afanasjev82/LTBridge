@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -361,6 +362,7 @@ def create_app(config: Config) -> Litestar:
         "ltengine_request_duration_seconds",
         "HTTP request duration in seconds",
         ["method"],
+        buckets=(0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, float("inf")),
         registry=registry,
     )
 
@@ -600,14 +602,12 @@ def create_app(config: Config) -> Litestar:
                 await self.app(scope, receive, send)
                 return
 
-            import time
-
             method: str = scope.get("method", "UNKNOWN")  # type: ignore[assignment]
-            path: str = scope.get("path", "/")  # type: ignore[assignment]
+            path: str = scope.get("path_template", scope.get("path", "/"))  # type: ignore[assignment]
             start_time = time.perf_counter()
             status_code = 500  # default to 500 if an exception occurs
 
-            async def send_with_metrics(message: dict[str, Any]) -> None:  # type: ignore[name-defined]
+            async def send_with_metrics(message: dict[str, Any]) -> None:
                 nonlocal status_code
                 if message["type"] == "http.response.start":
                     status_code = message["status"]
@@ -663,6 +663,7 @@ def create_app(config: Config) -> Litestar:
                         media_type=mime,
                         status_code=200,
                     )
+                    # Response implements the ASGI interface (callable); mypy doesn't recognize this.
                     await response(scope, receive, send)  # type: ignore[operator]
                     return
 
