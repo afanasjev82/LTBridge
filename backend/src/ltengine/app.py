@@ -25,6 +25,13 @@ from litestar.status_codes import (
 )
 from litestar.types import ASGIApp, Receive, Scope, Send
 from ltengine_frontend import get_static_dir
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    CollectorRegistry,
+    Counter,
+    Histogram,
+    generate_latest,
+)
 
 from . import errors
 from .config import Config
@@ -340,6 +347,24 @@ def create_app(config: Config) -> Litestar:
         await http_client.aclose()
 
     # ------------------------------------------------------------------
+    # Prometheus metrics
+    # ------------------------------------------------------------------
+
+    registry = CollectorRegistry()
+    requests_total = Counter(
+        "ltengine_requests_total",
+        "Total HTTP requests",
+        ["method", "path", "status"],
+        registry=registry,
+    )
+    request_duration_seconds = Histogram(
+        "ltengine_request_duration_seconds",
+        "HTTP request duration in seconds",
+        ["method"],
+        registry=registry,
+    )
+
+    # ------------------------------------------------------------------
     # Route handlers
     # ------------------------------------------------------------------
 
@@ -552,6 +577,50 @@ def create_app(config: Config) -> Litestar:
             media_type="application/json",
         )
 
+    @get("/metrics", name="metrics")
+    async def metrics() -> Response:
+        return Response(
+            content=generate_latest(registry),
+            status_code=HTTP_200_OK,
+            media_type=CONTENT_TYPE_LATEST,
+        )
+
+    # ------------------------------------------------------------------
+    # Metrics middleware (track requests)
+    # ------------------------------------------------------------------
+
+    class MetricsMiddleware:
+        """Track HTTP requests and responses with Prometheus metrics."""
+
+        def __init__(self, app: ASGIApp) -> None:
+            self.app = app
+
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            if scope["type"] != "http":
+                await self.app(scope, receive, send)
+                return
+
+            import time
+
+            method: str = scope.get("method", "UNKNOWN")  # type: ignore[assignment]
+            path: str = scope.get("path", "/")  # type: ignore[assignment]
+            start_time = time.perf_counter()
+            status_code = 500  # default to 500 if an exception occurs
+
+            async def send_with_metrics(message: dict[str, Any]) -> None:  # type: ignore[name-defined]
+                nonlocal status_code
+                if message["type"] == "http.response.start":
+                    status_code = message["status"]
+                await send(message)  # type: ignore[arg-type]
+
+            try:
+                await self.app(scope, receive, send_with_metrics)  # type: ignore[arg-type]
+            finally:
+                # Record metrics
+                duration = time.perf_counter() - start_time
+                requests_total.labels(method=method, path=path, status=status_code).inc()
+                request_duration_seconds.labels(method=method).observe(duration)
+
     # ------------------------------------------------------------------
     # Static file middleware (serves frontend UI)
     # ------------------------------------------------------------------
@@ -576,6 +645,7 @@ def create_app(config: Config) -> Litestar:
                 "/health",
                 "/frontend",
                 "/suggest",
+                "/metrics",
             )
             if path == "/" or not any(path.startswith(p) for p in api_prefixes):
                 # Serve index.html for root; for everything else try the file
@@ -593,7 +663,7 @@ def create_app(config: Config) -> Litestar:
                         media_type=mime,
                         status_code=200,
                     )
-                    await response(scope, receive, send)
+                    await response(scope, receive, send)  # type: ignore[operator]
                     return
 
             await self.app(scope, receive, send)
@@ -618,8 +688,9 @@ def create_app(config: Config) -> Litestar:
             translate,
             translate_file,
             suggest,
+            metrics,
         ],
-        middleware=[StaticFilesMiddleware],
+        middleware=[MetricsMiddleware, StaticFilesMiddleware],
         lifespan=[lifespan],
         debug=config.verbose,
         exception_handlers={

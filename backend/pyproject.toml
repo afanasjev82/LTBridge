@@ -10,6 +10,7 @@ dependencies = [
     "httpx>=0.28.1",
     "whatlang-py",
     "ltengine-frontend",
+    "prometheus-client>=0.20",
 ]
 
 [project.scripts]
