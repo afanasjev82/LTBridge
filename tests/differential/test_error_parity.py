@@ -45,6 +45,17 @@ STRUCTURAL_MISMATCH_CASES = [
     ("body_null", "null"),
     ("body_string", '"str"'),
     ("body_array", "[1,2]"),
+    # --- Final-review guard T6-10 (silent-200 class): `usage`/`finish_reason`
+    # are `Option<T>` on the Rust struct -- absent/null is fine, but a
+    # PRESENT non-null value of the wrong type fails the WHOLE deserialize in
+    # Rust, same as any other structural mismatch above. The prior revision
+    # of `_is_valid_completion_shape` never looked at either field, so these
+    # two used to silently 200 in Python while Rust 500'd.
+    ("usage_wrong_type", '{"choices":[{"message":{"content":"hi"}}],"usage":"oops"}'),
+    (
+        "finish_reason_wrong_type",
+        '{"choices":[{"message":{"content":"hi"},"finish_reason":42}]}',
+    ),
 ]
 
 

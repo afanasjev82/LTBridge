@@ -20,12 +20,23 @@ def _is_valid_completion_shape(data: object) -> bool:
     ``ResponseMessage { content: String }``: the body must be a JSON object with
     a ``choices`` array, and every element of that array must itself be an
     object with a ``message`` object carrying a string ``content`` field.
-    ``usage`` and ``finish_reason`` are optional (serde ``#[serde(default)]``)
-    and are not checked here. Deliberately does NOT check ``choices`` for
-    non-emptiness — an empty-but-well-shaped list is the separate ``NoChoices``
-    case, checked by the caller once this returns True.
+    ``usage`` and ``finish_reason`` are optional (serde ``#[serde(default)]``):
+    absent or ``null`` is fine (Option semantics), but final-review guard
+    T6-10 closes a silent-200 gap — if PRESENT and non-null, each must match
+    its Rust type (``usage`` -> an object/``Usage`` struct, ``finish_reason``
+    -> a string) or the WHOLE deserialize fails in Rust
+    (``response.json::<ChatCompletionResponse>()`` -> ``ApiError::Parse``,
+    500), same as a malformed ``choices``/``message``/``content``. A
+    wrong-typed ``usage``/``finish_reason`` used to slip through unchecked and
+    200 here. ``usage``'s OWN inner fields (e.g. ``completion_tokens``) are
+    NOT walked — nothing downstream reads them, so a nested type mismatch
+    there remains an unaddressed edge (deferred). Deliberately does NOT check
+    ``choices`` for non-emptiness — an empty-but-well-shaped list is the
+    separate ``NoChoices`` case, checked by the caller once this returns True.
     """
     if not isinstance(data, dict) or "choices" not in data:
+        return False
+    if "usage" in data and data["usage"] is not None and not isinstance(data["usage"], dict):
         return False
     choices = data["choices"]
     if not isinstance(choices, list):
@@ -37,6 +48,12 @@ def _is_valid_completion_shape(data: object) -> bool:
         if not isinstance(message, dict) or "content" not in message:
             return False
         if not isinstance(message["content"], str):
+            return False
+        if (
+            "finish_reason" in choice
+            and choice["finish_reason"] is not None
+            and not isinstance(choice["finish_reason"], str)
+        ):
             return False
     return True
 

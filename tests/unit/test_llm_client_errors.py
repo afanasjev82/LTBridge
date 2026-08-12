@@ -152,6 +152,40 @@ async def test_non_object_body_is_bad_response() -> None:
         assert exc_info.value.message.startswith("LLM API response parse error:")
 
 
+async def test_usage_wrong_type_is_bad_response() -> None:
+    # Final-review guard T6-10: `usage: Option<Usage>` -- a PRESENT non-null
+    # value that isn't an object fails the whole Rust deserialize, same as
+    # any other structural mismatch. Previously unchecked -> silent 200.
+    body = b'{"choices":[{"message":{"content":"hi"}}],"usage":"oops"}'
+    with pytest.raises(LlmError) as exc_info:
+        await _client_returning(body).translate("sys", "usr")
+    assert exc_info.value.http_status == 500
+    assert exc_info.value.message.startswith("LLM API response parse error:")
+
+
+async def test_finish_reason_wrong_type_is_bad_response() -> None:
+    body = b'{"choices":[{"message":{"content":"hi"},"finish_reason":42}]}'
+    with pytest.raises(LlmError) as exc_info:
+        await _client_returning(body).translate("sys", "usr")
+    assert exc_info.value.http_status == 500
+    assert exc_info.value.message.startswith("LLM API response parse error:")
+
+
+async def test_usage_and_finish_reason_absent_or_null_still_succeed() -> None:
+    # Option semantics regression guard: ABSENT and explicit `null` must both
+    # still succeed -- only a PRESENT wrong-typed value is rejected.
+    bodies = (
+        b'{"choices":[{"message":{"content":"hi"}}]}',
+        b'{"choices":[{"message":{"content":"hi"},"finish_reason":null}],"usage":null}',
+        (
+            b'{"choices":[{"message":{"content":"hi"},"finish_reason":"stop"}],'
+            b'"usage":{"completion_tokens":3}}'
+        ),
+    )
+    for body in bodies:
+        assert await _client_returning(body).translate("sys", "usr") == "hi"
+
+
 async def test_present_empty_choices_is_still_empty_choices() -> None:
     # Regression guard: the ONE shape that must still map to NoChoices.
     with pytest.raises(LlmError) as exc_info:
