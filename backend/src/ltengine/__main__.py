@@ -156,6 +156,7 @@ def main() -> None:
 
     from granian import Granian
     from granian.constants import Interfaces
+    from granian.log import LogLevels
 
     # Granian spawns worker processes via `multiprocessing`. On Windows (always) and
     # macOS (default since Python 3.8) the start method is 'spawn', not 'fork': the
@@ -188,7 +189,7 @@ def main() -> None:
         port=config.port,
         interface=Interfaces.ASGI,
         workers=args.workers,
-        log_level="debug" if config.verbose else "info",
+        log_level=LogLevels.debug if config.verbose else LogLevels.info,
     ).serve()
 
 
