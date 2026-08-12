@@ -513,9 +513,19 @@ def create_app(config: Config) -> Litestar:
             config.llm_max_tokens_floor,
         )
 
+        # Hoisted + explicitly raised (not `assert`) so the guard survives
+        # `python -O` (which strips assert statements) — an `-O` deployment
+        # must still refuse to proceed with a `None` client rather than crash
+        # deeper inside `work()` with an AttributeError. Binding to a fresh
+        # local (`client`, not reassigning `llm_client`) also lets mypy narrow
+        # `LLMClient | None` -> `LLMClient` inside the `work()` closure below.
+        if llm_client is None:
+            # constructed in `lifespan`, before serving
+            raise RuntimeError("llm_client not initialized")
+        client = llm_client
+
         async def work() -> dict[str, Any]:
-            assert llm_client is not None  # constructed in `lifespan`, before serving
-            raw = await llm_client.translate(prompt.system, prompt.user, max_tokens=cap)
+            raw = await client.translate(prompt.system, prompt.user, max_tokens=cap)
             return _result_body(raw)
 
         # Grace-race (main.rs:364-411). A failure that lands INSIDE the grace

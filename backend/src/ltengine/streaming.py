@@ -119,6 +119,8 @@ async def respond_with_grace(
         ``POST`` handler's response to 201.
     """
     task: asyncio.Task[ResultBody] = asyncio.create_task(work)
+    # consume terminal state; never log "Task exception was never retrieved"
+    task.add_done_callback(lambda t: t.cancelled() or t.exception())
     try:
         done, _pending = await asyncio.wait({task}, timeout=GRACE_PERIOD_S)
     except BaseException:

@@ -24,6 +24,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import pytest
+
 from .helpers import Snapshot, assert_parity, fire_both
 from .mock_upstream import MockBehavior
 
@@ -67,6 +69,37 @@ def test_fast_path_stays_buffered(pair) -> None:
     pair.reset()
     rust, py = fire_both(pair, "POST", "/translate", json_body=B)
     assert not rust.chunked and rust.leading_spaces == 0
+    assert not py.chunked and py.leading_spaces == 0
+    assert_parity(rust, py)
+
+
+def test_slow_resolution_inside_first_heartbeat(pair) -> None:
+    """Grace elapses with the task still pending (delay 1.5s > 1.0s grace), so
+    the 200 commits to chunked at the grace boundary — but the upstream then
+    resolves before the FIRST heartbeat's own 1s window elapses (1.5s < 2.0s),
+    so zero heartbeat spaces are ever emitted. Distinct from both the buffered
+    fast path (never chunked) and the >=1-heartbeat slow path.
+    """
+    pair.reset()
+    for h in (pair.rust, pair.py):
+        h.mock.set(MockBehavior(delay_s=1.5))
+    rust, py = fire_both(pair, "POST", "/translate", json_body=B, timeout=30.0)
+    assert rust.chunked and py.chunked
+    assert rust.leading_spaces == 0 and py.leading_spaces == 0
+    assert_parity(rust, py)
+
+
+def test_late_but_fast_failure_stays_buffered(pair) -> None:
+    """A failure at 0.5s (well under the 1.0s grace) is still the FAST path:
+    a buffered 503, not the chunked slow-failure wart — even though 0.5s is
+    "late" relative to a typical fast response.
+    """
+    pair.reset()
+    for h in (pair.rust, pair.py):
+        h.mock.set(MockBehavior(delay_s=0.5, status=502))
+    rust, py = fire_both(pair, "POST", "/translate", json_body=B, timeout=30.0)
+    assert rust.status == 503 and not rust.chunked
+    assert py.status == 503 and not py.chunked
     assert_parity(rust, py)
 
 
@@ -132,6 +165,8 @@ def test_slow_failure_auto_source_keeps_detected_language(pair) -> None:
     assert py_keys == rust_keys, f"key order: py={py_keys} rust={rust_keys}"
     assert rust_rest == {"alternatives": [], "translatedText": "Hello"}
     assert py_rest == rust_rest, f"body (minus detection): py={py_rest} rust={rust_rest}"
+    if py_detected == rust_detected:
+        pytest.fail("Task 9 landed — tighten this test to full assert_parity")
     # Values differ until Task 9 ports whatlang; the SHAPE must already match.
     assert list(py_detected) == list(rust_detected) == ["confidence", "language"]
     assert isinstance(py_detected["confidence"], int)

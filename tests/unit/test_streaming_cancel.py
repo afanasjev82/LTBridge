@@ -13,11 +13,12 @@ test is ``resp.iterator``.
 from __future__ import annotations
 
 import asyncio
+import gc
 
 import pytest
 from litestar.response import Response, Stream
 from litestar.serialization import default_serializer, encode_json
-from ltengine.streaming import respond_with_grace
+from ltengine.streaming import GRACE_PERIOD_S, HEARTBEAT_INTERVAL_S, respond_with_grace
 
 
 async def test_disconnect_cancels_work() -> None:
@@ -96,6 +97,62 @@ async def test_fast_path_is_buffered_200_not_201() -> None:
     assert isinstance(resp, Response) and not isinstance(resp, Stream)
     assert resp.status_code == 200
     assert resp.content == body
+
+
+async def test_disconnect_after_work_already_failed_no_unretrieved_exception_warning() -> None:
+    """Guards the ``task.add_done_callback`` fix: if the work task fails while
+    the heartbeat generator is merely PARKED between ``yield``s (not actively
+    inside the ``asyncio.wait`` that would otherwise consume it via
+    ``task.result()``), and the client then disconnects, asyncio must not log
+    "Task exception was never retrieved" once the task is garbage-collected.
+
+    Without the done-callback, this is exactly the gap: the generator's
+    ``finally`` only calls ``task.cancel()`` when ``not task.done()`` — a task
+    that already finished (with an exception) slips past both that guard AND
+    the `try: task.result() except Exception` branch, since a disconnect
+    throws ``GeneratorExit`` in at the ``yield`` point, well before the loop
+    ever reaches ``task.result()`` again.
+    """
+    logged: list[dict[str, object]] = []
+    loop = asyncio.get_running_loop()
+    original_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: logged.append(context))
+
+    try:
+
+        async def work() -> dict:
+            # Past the grace period AND past the first heartbeat's own window,
+            # so the first heartbeat is yielded (and the generator re-parked)
+            # before this fails.
+            await asyncio.sleep(GRACE_PERIOD_S + HEARTBEAT_INTERVAL_S + 0.3)
+            raise RuntimeError("boom after heartbeat")
+
+        resp = await respond_with_grace(work(), fallback_body={"translatedText": "orig"})
+        assert isinstance(resp, Stream)
+        gen = resp.iterator
+        assert await gen.__anext__() == b" "  # first heartbeat; generator now parked at yield
+
+        # Let the work task fail while we are parked between __anext__() calls
+        # (not inside an active asyncio.wait that would otherwise retrieve it).
+        await asyncio.sleep(0.5)
+
+        await gen.aclose()  # simulate client disconnect while parked
+
+        del gen
+        del resp
+        gc.collect()  # Task involvement in a traceback can form a reference
+        # cycle, so refcounting alone may not finalize it — force the cycle
+        # collector so any pending Task.__del__ runs now, not at some later
+        # arbitrary GC pass.
+        await asyncio.sleep(0)  # let any call_exception_handler dispatch settle
+
+    finally:
+        loop.set_exception_handler(original_handler)
+
+    messages = [str(c.get("message", "")) for c in logged]
+    assert not any("Task exception was never retrieved" in m for m in messages), (
+        f"unretrieved-exception warning logged: {logged}"
+    )
 
 
 async def test_fast_failure_propagates() -> None:
