@@ -109,6 +109,103 @@ CASES = [
         "/translate",
         {"files": {k: (None, v) for k, v in {**B, "alternatives": "lots"}.items()}},
     ),
+    # --- Final-review IMPORTANT 3: content-type gate is case-SENSITIVE on
+    # the raw header value (Rust: `content_type.starts_with("application/
+    # json")`), not the lowercased value Litestar's own `request.content_type`
+    # property would give. Oracle-verified: a case-mismatched header 400s even
+    # though the body is well-formed; a case-correct header WITH trailing
+    # params (charset) still matches (a prefix check, not equality).
+    (
+        "content_type_case_mismatch_json",
+        "POST",
+        "/translate",
+        {
+            "headers": {"content-type": "Application/JSON"},
+            "content": b'{"q":"Hello","source":"en","target":"ru"}',
+        },
+    ),
+    (
+        "content_type_case_correct_with_charset",
+        "POST",
+        "/translate",
+        {
+            "headers": {"content-type": "application/json; charset=utf-8"},
+            "content": b'{"q":"Hello","source":"en","target":"ru"}',
+        },
+    ),
+    (
+        "content_type_case_mismatch_form",
+        "POST",
+        "/translate",
+        {
+            "headers": {"content-type": "Application/X-WWW-Form-Urlencoded"},
+            "content": b"q=Hello&source=en&target=ru",
+        },
+    ),
+    # --- Final-review IMPORTANT 4: `alternatives` strictness, oracle-probed
+    # per the reviewer's explicit list -- leading space, negative, leading
+    # "+" (accepted), and u32 overflow -- each via BOTH form and multipart,
+    # since the two content types produce genuinely different error shapes.
+    ("alternatives_leading_space_form", "POST", "/translate", {"form": {**B, "alternatives": " 3"}}),
+    (
+        "alternatives_leading_space_multipart",
+        "POST",
+        "/translate",
+        {"files": {k: (None, v) for k, v in {**B, "alternatives": " 3"}.items()}},
+    ),
+    ("alternatives_negative_form", "POST", "/translate", {"form": {**B, "alternatives": "-5"}}),
+    (
+        "alternatives_negative_multipart",
+        "POST",
+        "/translate",
+        {"files": {k: (None, v) for k, v in {**B, "alternatives": "-5"}.items()}},
+    ),
+    ("alternatives_leading_plus_form", "POST", "/translate", {"form": {**B, "alternatives": "+3"}}),
+    (
+        "alternatives_leading_plus_multipart",
+        "POST",
+        "/translate",
+        {"files": {k: (None, v) for k, v in {**B, "alternatives": "+3"}.items()}},
+    ),
+    (
+        "alternatives_overflow_form",
+        "POST",
+        "/translate",
+        {"form": {**B, "alternatives": "4294967296"}},
+    ),
+    (
+        "alternatives_overflow_multipart",
+        "POST",
+        "/translate",
+        {"files": {k: (None, v) for k, v in {**B, "alternatives": "4294967296"}.items()}},
+    ),
+    (
+        "alternatives_max_u32_form",
+        "POST",
+        "/translate",
+        {"form": {**B, "alternatives": "4294967295"}},
+    ),
+    (
+        "alternatives_present_empty_form",
+        "POST",
+        "/translate",
+        {"form": {**B, "alternatives": ""}},
+    ),
+    (
+        "alternatives_present_empty_multipart",
+        "POST",
+        "/translate",
+        {"files": {k: (None, v) for k, v in {**B, "alternatives": ""}.items()}},
+    ),
+    # --- Final-review guard: /detect + form garbage `alternatives` (the
+    # shared `_parse_translate_payload` path is exercised by BOTH handlers;
+    # the ledger specifically wants a /detect-side case, not just /translate).
+    (
+        "detect_form_alternatives_garbage",
+        "POST",
+        "/detect",
+        {"form": {"q": "hi", "alternatives": "garbage"}},
+    ),
 ]
 
 

@@ -10,6 +10,7 @@ in ``server/app.py`` alongside the Prometheus registry it reads from.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from litestar import Request, Response, Router, get, post
@@ -24,7 +25,7 @@ from litestar.status_codes import (
 from ..config import Config
 from ..core import errors
 from ..core.formatting import improve_formatting
-from ..core.languages import LANGUAGES, detect_language, get_language_by_code
+from ..core.languages import LANGUAGES, DetectionResult, detect_language, get_language_by_code
 from ..core.prompt import PromptBuilder
 from ..core.token_budget import output_cap
 from ..llm_client import LLMClient
@@ -62,7 +63,15 @@ async def _parse_translate_payload(request: Request[Any, Any, State]) -> dict[st
     - A content-type outside JSON / ``application/x-www-form-urlencoded`` /
       ``multipart/form-data`` is rejected with ``"Unsupported content-type"``
       before any parsing is attempted (Rust: the trailing ``else`` branch of
-      ``parse_payload``'s content-type match).
+      ``parse_payload``'s content-type match). The match is a case-SENSITIVE
+      prefix check on the RAW header value (Rust: ``content_type.starts_with
+      ("application/json")`` et al — final-review IMPORTANT 3, oracle-
+      verified: ``Content-Type: Application/JSON`` 400s even though the body
+      is valid JSON, while ``application/json; charset=utf-8`` still matches,
+      since it's a prefix not an equality check). Litestar's own
+      ``request.content_type`` property lowercases via ``parse_content_header``
+      (right for Litestar's internal use, wrong for reproducing this gate),
+      so the raw value is read straight from ``request.headers`` instead.
     - For JSON, a syntax failure 400s via :func:`errors.json_deserialize_error`
       (Task 6); a present-but-wrong-typed field (e.g. ``"q":123`` where
       ``q: Option<String>``) 400s via :func:`errors.serde_invalid_type_error` —
@@ -85,9 +94,9 @@ async def _parse_translate_payload(request: Request[Any, Any, State]) -> dict[st
     Returns the parsed body dict, or a `Response` the caller must return
     unchanged (check via ``isinstance(result, Response)``).
     """
-    content_type = request.content_type[0] if request.content_type else ""
+    raw_content_type = request.headers.get("content-type", "")
 
-    if "application/json" in content_type:
+    if raw_content_type.startswith("application/json"):
         raw = await request.body()
         try:
             parsed = json.loads(raw)
@@ -100,10 +109,11 @@ async def _parse_translate_payload(request: Request[Any, Any, State]) -> dict[st
                 return type_error
         return parsed  # type: ignore[no-any-return]
 
-    if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+    is_multipart = raw_content_type.startswith("multipart/form-data")
+    if raw_content_type.startswith("application/x-www-form-urlencoded") or is_multipart:
         form = await request.form()
         body = dict(form)
-        type_error = _check_form_alternatives(body, multipart="multipart/form-data" in content_type)
+        type_error = _check_form_alternatives(body, multipart=is_multipart)
         if type_error is not None:
             return type_error
         return body
@@ -111,40 +121,85 @@ async def _parse_translate_payload(request: Request[Any, Any, State]) -> dict[st
     return _json_400("Unsupported content-type")
 
 
+#: ``u32::MAX`` — Rust's ``alternatives: Option<u32>`` overflow ceiling
+#: (final-review IMPORTANT 4, oracle-verified: ``"4294967296"`` 400s "number
+#: too large to fit in target type.", ``"4294967295"`` is accepted).
+_U32_MAX = 4_294_967_295
+
+#: A string Rust's ``u32::from_str`` would accept: an optional leading "+"
+#: (accepted for unsigned types too) followed by one or more ASCII digits —
+#: no interior/leading/trailing whitespace, no Unicode digits. Python's own
+#: ``int()`` accepts both of those, which is exactly the gap this closes
+#: (oracle-verified for ``" 3"``, ``"3 "``, and the full-width ``"３"``). A
+#: bare ``"+"`` with no digits falls through to the "empty" classification
+#: below, matching Rust's own ``[b'+' | b'-'] => Empty`` special case.
+_ALTERNATIVES_RE = re.compile(r"\+?[0-9]+")
+
+
+def _classify_u32_failure(raw: str) -> str | None:
+    """Classify why ``raw`` fails to parse as a Rust ``u32``, or ``None`` if
+    it parses fine. Mirrors ``std::num::ParseIntError``'s three reachable
+    kinds for this type (oracle-verified wording for all three, via
+    serde_urlencoded's ``"Parse error: {0}"`` wrapping): ``"empty"`` (empty
+    string, or a bare sign with no digits), ``"invalid_digit"`` (any
+    character outside ``[+0-9]`` — whitespace, a decimal point, a Unicode
+    digit, a leading ``"-"``), ``"overflow"`` (parses but exceeds
+    ``u32::MAX``). There is no reachable ``NegOverflow``/``Zero`` kind for
+    this type — a leading ``"-"`` is rejected as ``InvalidDigit`` before any
+    magnitude check ever runs (unsigned types don't parse a sign-then-digits
+    the way signed types do).
+    """
+    if not _ALTERNATIVES_RE.fullmatch(raw):
+        return "empty" if raw in ("", "+") else "invalid_digit"
+    digits = raw[1:] if raw[0] == "+" else raw
+    return "overflow" if int(digits) > _U32_MAX else None
+
+
+#: Rust's ``serde_urlencoded`` wraps a ``u32`` ``FromStr`` failure as
+#: ``"Parse error: {ParseIntError}."`` — the underlying message VARIES by
+#: failure kind (oracle-verified for all three; see
+#: :func:`_classify_u32_failure`).
+_FORM_ALTERNATIVES_MESSAGES = {
+    "empty": "Parse error: cannot parse integer from empty string.",
+    "invalid_digit": "Parse error: invalid digit found in string.",
+    "overflow": "Parse error: number too large to fit in target type.",
+}
+
+
 def _check_form_alternatives(body: dict[str, Any], *, multipart: bool) -> Response | None:
     """Reject a malformed ``alternatives`` field the way actix's own
     extractor does — at PARSE time, before ``check_params`` ever runs, same
-    ordering as the JSON path's :func:`_check_typed_fields`. Unlike the JSON
-    path, form-urlencoded and multipart produce genuinely DIFFERENT error
-    shapes from each other (oracle-verified against ``alternatives=lots``):
+    ordering as the JSON path's :func:`_check_typed_fields`. A KEY absent
+    from ``body`` is fine (``Option<u32>`` -> ``None``); a PRESENT-but-empty
+    value (``alternatives=``) is NOT the same as absent — final-review
+    IMPORTANT 4, oracle-verified: Rust deserializes it as ``Some("")``,
+    which then fails to parse as ``u32`` ("cannot parse integer from empty
+    string."), a genuine 400, not a silent skip.
+
+    Unlike the JSON path, form-urlencoded and multipart produce genuinely
+    DIFFERENT error shapes from each other (oracle-verified across every
+    failure kind, not just the non-numeric ``"lots"`` case):
 
     - ``application/x-www-form-urlencoded`` (serde_urlencoded's ``u32``
-      ``FromStr`` failure): 400 ``"Parse error: invalid digit found in
-      string."``
+      ``FromStr`` failure): 400, kind-specific message — see
+      :data:`_FORM_ALTERNATIVES_MESSAGES`.
     - ``multipart/form-data`` (actix-multipart's ``MPText<u32>`` field
-      failure): 400 ``"An error occurred processing field: alternatives"``
-
-    A missing or empty value is fine (``Option<u32>`` -> ``None``, matches
-    the JSON path's ``if value is None: continue``). A negative int is
-    treated as a parse failure here too — Rust's actual behaviour for a
-    negative value on THIS content-type is unverified (no CASE exercises
-    it), the same documented simplification already noted for the JSON path
-    in :func:`_check_typed_fields`.
+      failure): ALWAYS 400 ``"An error occurred processing field:
+      alternatives"``, regardless of failure kind — oracle-verified: the
+      overflow, empty, and invalid-digit cases are byte-identical on this
+      content type; actix-multipart's wrapper discards the underlying
+      ``ParseIntError`` detail entirely, unlike serde_urlencoded's.
     """
-    raw = body.get("alternatives")
-    if raw in (None, ""):
+    if "alternatives" not in body:
         return None
-    try:
-        if int(raw) < 0:
-            raise ValueError("negative alternatives")
-    except (TypeError, ValueError):
-        message = (
-            "An error occurred processing field: alternatives"
-            if multipart
-            else "Parse error: invalid digit found in string."
-        )
-        return _json_400(message)
-    return None
+    raw = body["alternatives"]
+    raw_str = raw if isinstance(raw, str) else str(raw)
+    kind = _classify_u32_failure(raw_str)
+    if kind is None:
+        return None
+    if multipart:
+        return _json_400("An error occurred processing field: alternatives")
+    return _json_400(_FORM_ALTERNATIVES_MESSAGES[kind])
 
 
 def _field_type_mismatch(key: str, value: Any) -> bool:
@@ -230,6 +285,50 @@ def _check_params(body: dict[str, Any], config: Config, required: list[str]) -> 
     return None
 
 
+def _detection_json(result: DetectionResult) -> dict[str, Any]:
+    """``{"confidence": ..., "language": ...}`` — shared by ``/detect``'s
+    top-level list item and ``/translate``'s nested ``detectedLanguage``
+    object (:func:`_translate_response_body`). Key order matches Rust's
+    ``serde_json::json!({"language": ..., "confidence": ...})``: a
+    dynamically-built ``Value::Object`` serializes via serde_json's default
+    BTreeMap (alphabetical: confidence < language), NOT insertion order —
+    oracle-verified across every dynamic response body that carries this
+    shape.
+    """
+    return {"confidence": result.confidence, "language": result.language.code}
+
+
+def _translate_response_body(
+    q: str, translated_text: str, *, alternatives: int, detected: DetectionResult | None
+) -> dict[str, Any]:
+    """Port of main.rs's ``translate_response_json``. Single source of truth
+    for EVERY ``/translate`` 200 body — identity, fast success, and the
+    streamed-fallback body alike (the ``translate`` handler below calls this
+    same function for all three) — so the streamed fallback body can never
+    drift from the success body (oracle-verified: a slow failure with
+    ``source="auto"`` still carries ``detectedLanguage``, and ``alternatives``
+    when requested). Extracted to module level (final-review alphabetical-key
+    structural guard) so its key-order invariant is directly unit-testable
+    without spinning up a server.
+
+    Key order (both here and the nested ``detectedLanguage`` object) matches
+    Rust's ``serde_json::json!({...})`` — a dynamically-built ``Value::Object``
+    serializes via serde_json's default BTreeMap (alphabetical), not
+    insertion order: alternatives < detectedLanguage < translatedText. Insert
+    in that fixed order regardless of which optional keys end up present.
+    """
+    body: dict[str, Any] = {}
+
+    if alternatives > 0:
+        body["alternatives"] = []
+
+    if detected is not None:
+        body["detectedLanguage"] = _detection_json(detected)
+
+    body["translatedText"] = improve_formatting(q, translated_text)
+    return body
+
+
 # ---------------------------------------------------------------------------
 # Router factory
 # ---------------------------------------------------------------------------
@@ -292,13 +391,8 @@ def create_router(config: Config, llm_client: LLMClient) -> Router:
         q_value = body.get("q")
         q = q_value if isinstance(q_value, str) else ""
         result = detect_language(q)
-        # Key order matches Rust's `serde_json::json!({"language":...,
-        # "confidence":...})`: dynamically-built `Value::Object`s serialize
-        # via serde_json's default BTreeMap (alphabetical), NOT insertion
-        # order — confirmed against the oracle across every multi-key
-        # dynamic response body (frontend/settings, translate's result).
         return Response(
-            content=[{"confidence": result.confidence, "language": result.language.code}],
+            content=[_detection_json(result)],
             status_code=HTTP_200_OK,
             media_type="application/json",
         )
@@ -374,29 +468,9 @@ def create_router(config: Config, llm_client: LLMClient) -> Router:
         detected = detect_language(q) if source == "auto" else None
 
         def _result_body(translated_text: str) -> dict[str, Any]:
-            """Port of main.rs's ``translate_response_json``.
-
-            Key order (both here and the nested detectedLanguage object)
-            matches Rust's `serde_json::json!({...})` — a dynamically-built
-            `Value::Object` serializes via serde_json's default BTreeMap
-            (alphabetical), not insertion order: alternatives <
-            detectedLanguage < translatedText, and confidence < language.
-            Insert in that fixed order regardless of which optional keys end
-            up present.
-            """
-            body: dict[str, Any] = {}
-
-            if alternatives > 0:
-                body["alternatives"] = []
-
-            if detected is not None:
-                body["detectedLanguage"] = {
-                    "confidence": detected.confidence,
-                    "language": detected.language.code,
-                }
-
-            body["translatedText"] = improve_formatting(q, translated_text)
-            return body
+            return _translate_response_body(
+                q, translated_text, alternatives=alternatives, detected=detected
+            )
 
         # Identity path: no LLM call, so no grace machinery — Rust returns here
         # before the race is even set up. The formatting pass still runs
