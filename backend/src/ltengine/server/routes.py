@@ -15,6 +15,7 @@ from typing import Any
 
 from litestar import Request, Response, Router, get, post
 from litestar.datastructures import State
+from litestar.response.base import ASGIResponse
 from litestar.status_codes import (
     HTTP_200_OK,
     HTTP_400_BAD_REQUEST,
@@ -41,6 +42,25 @@ def _validate_format(fmt: str) -> str | None:
     if fmt not in ("text", "html"):
         return "Invalid format. Supported formats: text, html"
     return None
+
+
+class _EmptyOkResponse(Response[None]):
+    """A ``Response`` whose ASGI conversion is a genuinely EMPTY 200 body
+    with NO content-type header. Oracle-verified (coordinator follow-up,
+    spec S3.4): ``GET /health`` is Rust's bare ``HttpResponse::Ok().finish()``
+    — ``Content-Length: 0``, no body, no content-type. ``Response``'s own
+    conversion pipeline always ``setdefault``s a content-type whenever the
+    status allows a body, with no supported opt-out through the public API —
+    same reason ``server/app.py``'s ``_NotFoundResponse`` exists for the 404
+    case — so the header is stripped by hand here too (self-contained rather
+    than importing app.py's helper: routes.py is imported BY app.py, so the
+    reverse import would be circular).
+    """
+
+    def to_asgi_response(self, *args: Any, **kwargs: Any) -> ASGIResponse:  # type: ignore[override]
+        resp = ASGIResponse(body=b"", status_code=HTTP_200_OK)
+        del resp.headers["content-type"]
+        return resp
 
 
 def _json_400(message: str) -> Response:
@@ -347,7 +367,7 @@ def create_router(config: Config, llm_client: LLMClient) -> Router:
 
     @get("/health", name="health")
     async def health() -> Response:
-        return Response(content=None, status_code=HTTP_200_OK)
+        return _EmptyOkResponse(content=None, status_code=HTTP_200_OK)
 
     @get("/languages", name="languages")
     async def languages() -> list[dict[str, Any]]:

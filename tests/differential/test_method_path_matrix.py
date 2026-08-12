@@ -6,6 +6,9 @@ targeted tests covered.
 Cells:
   - "/translate", "/translate/"  -- POST-only exact route + its trailing-slash twin
   - "/languages", "/languages/"  -- GET-only exact route + its trailing-slash twin
+  - "/health"                    -- GET-only exact route whose GET body is a genuine
+                                     empty match on both sides (unlike /index.html below,
+                                     no skip needed)
   - "/index.html"                -- a real static asset on BOTH sides (CRITICAL 1/2
                                      don't touch static resolution, but the grid is only
                                      complete with a genuine static hit in it)
@@ -28,7 +31,15 @@ from .helpers import assert_parity, fire_both
 
 B = {"q": "Hello", "source": "en", "target": "ru"}
 
-_PATHS = ["/translate", "/translate/", "/languages", "/languages/", "/index.html", "/no/such/path"]
+_PATHS = [
+    "/translate",
+    "/translate/",
+    "/languages",
+    "/languages/",
+    "/health",
+    "/index.html",
+    "/no/such/path",
+]
 _METHODS = ["GET", "HEAD", "POST", "DELETE"]
 
 
