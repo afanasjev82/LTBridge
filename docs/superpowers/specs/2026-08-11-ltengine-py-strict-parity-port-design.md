@@ -143,10 +143,16 @@ must match Rust exactly on code AND confidence.
 
 **B1 — wrapper overhead (the performance gate).** Both servers → same zero-delay mock
 upstream; one shared asyncio+httpx bencher; C ∈ {1, 8, 32}; ≥ 2000 requests/arm;
-p50/p95/p99 + RPS. **Acceptance: Python p50 wrapper overhead ≤ Rust + 3 ms; RPS ≥ 70% of
-Rust at C=32.** Rationale: actix will win raw RPS; per-worker production concurrency is
-≤ ~32 at multi-second GPU latencies, so single-digit-ms wrapper deltas are invisible —
-the gate proves "irrelevant at production load", not "beats Rust".
+p50/p99 + RPS. **Acceptance (amended 2026-08-12, user decision): Python p50 ≤ Rust p50
++ 3 ms at C=1 (the queue-free per-request wrapper cost); RPS ratio py/rust ≥ 0.70 at
+C=32 taken as the median of ≥ 5 runs.** Rationale: actix will win raw RPS; per-worker
+production concurrency is ≤ ~32 at multi-second GPU latencies, so sub-ms per-request
+deltas are invisible — the gate proves "irrelevant at production load", not "beats Rust".
+> Amendment note: the original absolute p50-overhead bar at C=32 was measured unphysical
+> during implementation — the in-process mock harness saturates (~642 rps, 35 ms p50
+> empty) at C=32, the direct-mock floor term cancels out of the gate algebraically, and
+> the 3 ms bar demands a 94 µs/request differential, below the instrument's own ~4 ms
+> run-to-run noise. Measured truth retained in `bench/REPORT.md`: C=1 delta ≈ 0.8 ms/req.
 
 **B2 — e2e sanity (real vLLM).** Same 20 texts, C=4, both servers via
 `smartech-ltengine-vllm`: end-to-end latency parity within noise (model dominates).
