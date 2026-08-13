@@ -355,6 +355,8 @@ def main() -> int:
 
             hits = sorted(glob.glob(os.path.expanduser("~/.cargo/registry/src/*/whatlang-*")))
             crate_dir = Path(hits[-1]) if hits else None
+        if args.dump is not None and (crate_dir is None or not crate_dir.is_dir()):
+            ap.error(f"--dump requires a valid crate dir; got {crate_dir!r}")
         corpus = build_corpus(crate_dir, args.seed)
 
         import whatlang_py

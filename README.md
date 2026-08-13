@@ -113,7 +113,7 @@ ltengine-py/
 │   ├── gen_whatlang_data.py    # Regenerates core/_whatlang_data.py from the crate
 │   ├── sweep_detection_parity.py  # Zero-divergence gate for the detection port
 │   └── run_suite.py            # One-command suite runner (WSL-aware)
-└── docs/                      # Design specs and plans (docs/superpowers/)
+└── docs/                      # Design specs and plans (local-only, gitignored)
 ```
 
 ## Development

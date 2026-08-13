@@ -82,10 +82,10 @@ _SIGMA = "Σ"
 _SIGMA_LOWER = "σ"
 _SIGMA_FINAL = "ς"
 
-_CASE_IGNORABLE_STARTS = tuple(lo for lo, _ in _d.CASE_IGNORABLE_RANGES)
-_CASE_IGNORABLE_ENDS = tuple(hi for _, hi in _d.CASE_IGNORABLE_RANGES)
-_CASED_STARTS = tuple(lo for lo, _ in _d.CASED_RANGES)
-_CASED_ENDS = tuple(hi for _, hi in _d.CASED_RANGES)
+_CASE_IGNORABLE_STARTS = tuple(lo for lo, _ in sorted(_d.CASE_IGNORABLE_RANGES))
+_CASE_IGNORABLE_ENDS = tuple(hi for _, hi in sorted(_d.CASE_IGNORABLE_RANGES))
+_CASED_STARTS = tuple(lo for lo, _ in sorted(_d.CASED_RANGES))
+_CASED_ENDS = tuple(hi for _, hi in sorted(_d.CASED_RANGES))
 
 _LOWER = _d.LOWERCASE_MAP
 
@@ -149,15 +149,22 @@ _script_cache: dict[str, tuple[int, ...]] = {}
 
 def _scripts_of(ch: str) -> tuple[int, ...]:
     """Indices (into ``_SCRIPTS``) of every script whose range table contains *ch*."""
-    hit = _script_cache.get(ch)
+    cp = ord(ch)
+    # Only cache code points < 0x3000 (covers all hot ASCII/Latin/Cyrillic paths, caps dict at a few KB)
+    if cp < 0x3000:
+        hit = _script_cache.get(ch)
+        if hit is not None:
+            return hit
+    else:
+        hit = None
     if hit is None:
-        cp = ord(ch)
         hit = tuple(
             k
             for k in range(_N_SCRIPTS)
             if _in_ranges(cp, _SCRIPT_STARTS[k], _SCRIPT_ENDS[k])
         )
-        _script_cache[ch] = hit
+        if cp < 0x3000:
+            _script_cache[ch] = hit
     return hit
 
 
@@ -481,6 +488,10 @@ def detect(text: str, allowlist: frozenset[str] | None = None) -> tuple[str, int
         allowlist: English display names (after the Mandarin -> Chinese remap)
             of the languages the detector may return, mirroring
             ``Detector::with_allowlist``. ``None`` allows every language.
+            **Note:** ``allowlist=None`` is NOT parity-guaranteed — the unrestricted
+            Latin slice is 37 elements, above the 32-element bound where Rust's
+            ``sort_unstable`` stays empirically stable; production always passes the
+            49-language allowlist.
 
     Returns:
         ``(english_display_name, confidence_0_to_100)``, or ``None`` when no
