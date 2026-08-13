@@ -8,7 +8,6 @@ build/
 .env
 .superpowers/
 .rust-ref/
-whatlang-py/target/
 docs/
 .mypy_cache/
 .ruff_cache/

@@ -5,15 +5,17 @@ generated corpus and prints a divergence count that must be ``0``.
 
 Two oracle modes:
 
-``--oracle binding`` (default while ``whatlang_py`` is installed)
-    Calls the vendored PyO3 binding directly. Use this to *prove* the port
-    before the Rust crate is deleted, and to (re)record expectations.
-
-``--oracle recorded``
+``--oracle recorded`` (default)
     Replays ``tests/fixtures/detection_sweep.json.gz`` — the corpus plus the
-    outputs the binding produced when it still existed. This is what
-    ``tests/unit/test_detection_sweep.py`` runs, so parity stays regression
-    guarded after the binding is gone.
+    outputs the vendored ``whatlang_py`` PyO3 binding produced while it still
+    existed. This is what ``tests/unit/test_detection_sweep.py`` runs, so
+    parity stays regression guarded now that the binding is gone.
+
+``--oracle binding``
+    Calls the binding directly. This is how the port was *proved* before the
+    Rust crate was deleted, and how expectations are re-recorded after a crate
+    bump — it requires reinstating ``whatlang-py`` as a workspace member first
+    (see the README).
 
 Corpus (deterministic, seeded):
 
@@ -335,12 +337,15 @@ def build_corpus(crate_dir: Path | None, seed: int) -> list[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--oracle", choices=("binding", "recorded"), default="binding")
+    ap.add_argument("--oracle", choices=("binding", "recorded"), default="recorded")
     ap.add_argument("--crate-dir", type=Path, default=None)
     ap.add_argument("--seed", type=int, default=20260813)
     ap.add_argument("--dump", type=Path, nargs="?", const=DEFAULT_DUMP, default=None)
     ap.add_argument("--max-report", type=int, default=20)
     args = ap.parse_args()
+
+    if args.dump is not None and args.oracle != "binding":
+        ap.error("--dump requires --oracle binding; recording from the recording is circular")
 
     if args.oracle == "binding":
         crate_dir = args.crate_dir

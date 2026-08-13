@@ -1,14 +1,16 @@
 """Language registry and offline language detection.
 
-Port of LTEngine's languages.rs, backed by whatlang (via the vendored
-`whatlang_py` PyO3 binding in `whatlang-py/`) for byte-parity detection.
+Port of LTEngine's languages.rs. Detection runs on the pure-Python whatlang
+port in :mod:`ltengine.core.whatlang` (tables generated from the whatlang
+0.18.0 crate by ``scripts/gen_whatlang_data.py``), which reproduces the Rust
+oracle's output exactly — see ``scripts/sweep_detection_parity.py``.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-import whatlang_py
+from . import whatlang
 
 # ---------------------------------------------------------------------------
 # Language definitions (port of LANGS in languages.rs)
@@ -115,14 +117,21 @@ def get_language_by_code(code: str) -> Language | None:
 
 
 # ---------------------------------------------------------------------------
-# Offline language detection via whatlang (whatlang_py), parity with
+# Offline language detection via the pure-Python whatlang port, parity with
 # languages.rs's `detect_lang`.
 # ---------------------------------------------------------------------------
 
-# whatlang_py.detect() already returns the display name after languages.rs's
-# Mandarin->Chinese remap (see whatlang-py/src/lib.rs), so this is a direct
-# name -> internal-code lookup over our own LANGS display names.
+# whatlang.detect() returns the display name after languages.rs's
+# Mandarin->Chinese remap, so this is a direct name -> internal-code lookup
+# over our own LANGS display names.
 _NAME_TO_INTERNAL: dict[str, str] = {name: code for code, _alias, name in _LANG_DEFS}
+
+# languages.rs builds its detector allowlist from these same display names:
+# every whatlang language whose (remapped) English name is one of ours is
+# detectable, the rest are not. Four of our names — "Chinese (traditional)",
+# "Portuguese (Brazil)", "Norwegian" (whatlang: "Bokmal") and "Slovenian"
+# (whatlang: "Slovene") — match nothing, exactly as in the Rust oracle.
+_DETECT_ALLOWLIST: frozenset[str] = frozenset(_NAME_TO_INTERNAL)
 
 
 @dataclass
@@ -134,7 +143,7 @@ class DetectionResult:
 def detect_language(text: str) -> DetectionResult:
     """Detect the language of *text* via whatlang. Returns English with confidence 0 on failure."""
     fallback = DetectionResult(language=LANGUAGES[0], confidence=0)
-    result = whatlang_py.detect(text)
+    result = whatlang.detect(text, _DETECT_ALLOWLIST)
     if result is None:
         return fallback
 

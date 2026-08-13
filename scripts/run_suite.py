@@ -1,9 +1,11 @@
 """One command, either OS: ensure the Rust oracle, then run the full suite.
 
 Environment pivot (2026-08-12, see .superpowers/sdd/progress.md): the native
-Windows Rust toolchain is broken (missing x64 SDK libs) and whatlang-py has
-no Windows wheel, so the Rust oracle build AND the differential suite are
-now WSL-only. This script makes "one command" true from either side:
+Windows Rust toolchain is broken (missing x64 SDK libs), so the Rust oracle
+build AND the differential suite that needs it are WSL-only. (The server
+itself is pure Python now — the whatlang PyO3 binding that also forced this
+was replaced by ltengine.core.whatlang — but the oracle still needs cargo.)
+This script makes "one command" true from either side:
 
 - On Windows, it re-execs itself inside WSL (``wsl.exe -d Ubuntu-20.04``),
   translating this repo's Windows path to its ``/mnt/<drive>/...`` mount

@@ -85,6 +85,8 @@ ltengine-py/
 │       ├── core/              # transport-free, importable without Litestar
 │       │   ├── prompt.py        # Translation prompt builder
 │       │   ├── languages.py     # Language registry + whatlang-parity detection
+│       │   ├── whatlang.py      # Pure-Python port of the whatlang 0.18 detector
+│       │   ├── _whatlang_data.py  # GENERATED detection tables (see scripts/)
 │       │   ├── token_budget.py  # Dynamic max_tokens budget calculation
 │       │   ├── formatting.py    # Text formatting/trim helpers
 │       │   └── errors.py        # LlmError taxonomy
@@ -100,36 +102,36 @@ ltengine-py/
 │       ├── index.html
 │       ├── app.js
 │       └── style.css
-├── whatlang-py/                # Vendored PyO3/maturin crate: whatlang 0.18 binding
-│   └── src/lib.rs                (language-detection parity with the Rust oracle)
 ├── tests/
 │   ├── unit/                   # Fast, no external process
 │   ├── differential/            # Launches Rust oracle + Python server side by side
-│   └── live/                    # Needs a real vLLM container; `-m live`
+│   ├── live/                    # Needs a real vLLM container; `-m live`
+│   └── fixtures/                # Recorded whatlang oracle outputs (detection sweep)
 ├── bench/                     # B1 (mock upstream) + B2 (real vLLM) benchmarks
 ├── scripts/
 │   ├── build_rust_ref.py       # Builds the Rust reference binary (WSL worktree)
+│   ├── gen_whatlang_data.py    # Regenerates core/_whatlang_data.py from the crate
+│   ├── sweep_detection_parity.py  # Zero-divergence gate for the detection port
 │   └── run_suite.py            # One-command suite runner (WSL-aware)
 └── docs/                      # Design specs and plans (docs/superpowers/)
 ```
 
 ## Development
 
-**WSL is the supported development workflow.** The differential test suite proves
-byte-parity by running a compiled **Rust reference binary** (the upstream
-[LTEngine](https://github.com/afanasjev82/LTEngine) `development` branch, built locally)
-side by side with this Python server, and detection parity depends on `whatlang-py`, a
-vendored PyO3/maturin extension wrapping the Rust `whatlang` crate. Both require a native
-Rust toolchain; on this project's dev environment the native Windows Rust/MSVC toolchain
-is broken and there is no Windows wheel for `whatlang_py` — **`uv sync` fails on Windows
-by design.** Do all dependency installation, building, testing, and running under **WSL
-(Ubuntu-20.04)**; Windows is edit-only (browsing/editing source, docs). Every command
-below must be run from the **repo root** — the root `pyproject.toml`'s
+**WSL is the supported development workflow.** The shipped server is pure Python — no
+compiled extensions, no Rust. What still needs a native Rust toolchain is the
+*differential test suite*, which proves byte-parity by running a compiled **Rust
+reference binary** (the upstream [LTEngine](https://github.com/afanasjev82/LTEngine)
+`development` branch, built locally into the gitignored `.rust-ref/`) side by side with
+this Python server. On this project's dev environment the native Windows Rust/MSVC
+toolchain is broken, so do all dependency installation, building, testing, and running
+under **WSL (Ubuntu-20.04)**; Windows is edit-only (browsing/editing source, docs). Every
+command below must be run from the **repo root** — the root `pyproject.toml`'s
 `[tool.pytest.ini_options]`/`[tool.mypy]` paths are resolved relative to the current
 working directory.
 
 ```bash
-# Install dependencies (WSL only — builds whatlang-py via maturin as part of the sync)
+# Install dependencies
 uv sync
 
 # Build/refresh the Rust reference oracle in .rust-ref/ (idempotent; safe to re-run —
@@ -166,10 +168,43 @@ uv run ruff check .
 uv run mypy backend
 ```
 
-**Note on `whatlang-py`:** it's built by [`maturin`](https://www.maturin.rs/) as a
-regular `uv` workspace member (`[tool.uv.sources] whatlang-py = { workspace = true }`
-in the root `pyproject.toml`) — `uv sync` compiles it automatically, no separate step
-needed, as long as a Rust toolchain (`cargo`) is on `PATH` inside WSL.
+### Language detection
+
+Offline language detection is a **pure-Python port** of the Rust
+[`whatlang`](https://crates.io/crates/whatlang) 0.18.0 crate, living in
+`backend/src/ltengine/core/whatlang.py`. It replaced a vendored PyO3/maturin binding, so
+the repo now contains no Rust and `uv sync` needs no compiler.
+
+All of its tables — trigram profiles, per-script Unicode ranges, alphabets, `Lang`
+metadata, script→language mappings — are **generated**, never hand-transcribed:
+
+```bash
+# Regenerate backend/src/ltengine/core/_whatlang_data.py from the crate source
+# (auto-locates ~/.cargo/registry/src/*/whatlang-0.18.0; needs rustc only to snapshot
+#  the Rust std case tables, and writes no Rust into this repo)
+uv run python scripts/gen_whatlang_data.py
+
+# Re-run the zero-divergence gate against the recorded oracle outputs
+uv run python scripts/sweep_detection_parity.py
+
+# Re-prove against the real crate and re-record the fixture. Only needed after a
+# crate bump, and it requires temporarily reinstating the whatlang-py PyO3 binding
+# as a uv workspace member (deleted in favour of the port).
+uv run python scripts/sweep_detection_parity.py --oracle binding --dump
+```
+
+The generated module's header records the crate version, the rustc version and a
+SHA-256 of every parsed crate file. Parity is guarded from two directions: the
+differential suite fires `/detect` at the live Rust oracle, and
+`tests/unit/test_detection_sweep.py` replays 16 369 recorded oracle outputs
+(`tests/fixtures/detection_sweep.json.gz`) covering every script, all 51 profiled
+languages, degenerate inputs and single characters across the range tables.
+
+Two deliberate fidelity choices are documented in the module: sorting uses Python's
+stable `sorted` (exact, because Rust's `sort_unstable` is stable at the slice lengths
+involved), and lowercasing uses a snapshot of the **Rust** standard library's case
+tables rather than `str.lower()` — rustc 1.96 ships Unicode 16.0 against CPython 3.12's
+15.0, and pinning stops a future CPython Unicode bump from moving detection.
 
 ## Benchmarks
 
