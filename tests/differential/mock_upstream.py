@@ -87,3 +87,40 @@ def create_mock_app(state: MockState):
             await send_json(send, 404, b'{"error":"mock: unknown path"}')
 
     return app
+
+
+def _main() -> None:
+    """Standalone out-of-process entry point: ``python -m tests.differential.mock_upstream
+    --port N``. Serves the identical ASGI app `start_mock()` (conftest.py) runs in-thread,
+    but as its own OS process so a load generator driving it at high concurrency (e.g. the
+    bench sweep's C=64 arm) doesn't share a GIL/event-loop with the mock itself — the
+    in-thread mock self-saturates under enough concurrent load (see bench/REPORT.md), which
+    is fine for the differential suite's correctness checks (never run at that concurrency)
+    but invalidates a throughput measurement. Default behavior (``MockState()`` /
+    ``MockBehavior()``); the ``/__mock__/*`` recording+control endpoints stay live so a
+    caller can still introspect/reconfigure it over HTTP if needed.
+
+    Not used by the differential test suite (`start_mock()` in conftest.py keeps running the
+    mock in-thread, in-process — unchanged) — this is purely a bench-sweep helper.
+    """
+    import argparse
+
+    import uvicorn
+
+    ap = argparse.ArgumentParser(prog="python -m tests.differential.mock_upstream")
+    ap.add_argument("--host", default="127.0.0.1", metavar="HOST")
+    ap.add_argument("--port", type=int, required=True, metavar="PORT")
+    args = ap.parse_args()
+
+    state = MockState()
+    uvicorn.run(
+        create_mock_app(state),
+        host=args.host,
+        port=args.port,
+        log_level="warning",
+        lifespan="off",
+    )
+
+
+if __name__ == "__main__":
+    _main()
