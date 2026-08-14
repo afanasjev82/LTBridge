@@ -1,5 +1,6 @@
 """20 real short texts for B2 (varied languages/lengths). Salt per run to defeat prefix caching."""
 
+import random
 import uuid
 
 TEXTS = [
@@ -28,3 +29,25 @@ TEXTS = [
 
 def salted(text: str) -> str:
     return f"{text} [{uuid.uuid4().hex[:8]}]"
+
+
+def long_text(target_chars: int = 1500) -> str:
+    """Synthesize a ~1-2k char 'long' text for the real-vLLM bench's C>=8 workload mix
+    (see bench/real_bench.py) by joining several of the 20 short TEXTS entries, each
+    individually salted, in a randomized order until ``target_chars`` is reached. There is
+    no fixed long-text corpus in this repo, so this builds one out of what's already here
+    rather than hand-authoring near-duplicate long paragraphs. Every call re-shuffles and
+    re-salts, so no two long texts (even from the same call site) collide on content —
+    same cache-busting property `salted()` gives the short texts.
+    """
+    pool = TEXTS.copy()
+    random.shuffle(pool)
+    parts: list[str] = []
+    total = 0
+    i = 0
+    while total < target_chars:
+        piece = salted(pool[i % len(pool)])
+        parts.append(piece)
+        total += len(piece) + 1
+        i += 1
+    return " ".join(parts)
