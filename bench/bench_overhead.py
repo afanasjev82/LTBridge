@@ -22,8 +22,26 @@ p50 swung ~29-36ms across identical repeats — see bench/REPORT.md). The amende
   - C=8 (single run): informational only, no gate (same reasoning trajectory as C=32,
     just not as severe — not worth a second unphysical bar).
   - C=32 (>= 5 repeated runs, `--runs N`): GATED on RATIO OF MEDIAN RPS values —
-    median(py_rps) / median(rust_rps) >= 0.70 across the repeats. p50/p95/p99 are still
-    printed per run, labeled INFORMATIONAL, to keep them visible without gating on them.
+    median(py_rps) / median(rust_rps) >= 0.60 across the repeats (re-anchored 2026-08-15,
+    see below — was 0.70 against the in-process mock). p50/p95/p99 are still printed per
+    run, labeled INFORMATIONAL, to keep them visible without gating on them.
+
+Re-anchored 2026-08-15 (user decision; see
+docs/superpowers/specs/2026-08-11-ltengine-py-strict-parity-port-design.md §7). The C=32 gate
+above was calibrated on the in-process mock (`tests/differential/conftest.py::start_mock()`,
+an in-thread uvicorn server sharing this process's GIL/event-loop with the httpx load
+generator). That mock self-saturates around C=32 (~642rps/35ms on an EMPTY body — see
+bench/REPORT.md), and it throttled rust more than py, inflating the measured ratio
+(0.84-0.91 in-process vs ~0.66 honest). The default gated mode now dispatches both the
+`direct-mock` floor and each server's own mock to the OUT-OF-PROCESS mock
+(`python -m tests.differential.mock_upstream`, the same standalone process `bench/sweep.py`
+spawns for its wider ladder — `_launch_mock()` below is shared by both modules so there is
+exactly one mock-launching implementation) and the C=32 gate threshold moves 0.70 -> 0.60,
+preserving the same relative margin the old bar had over its own (inflated) measured ratio.
+The gate run also prints an informational absolute-headroom line comparing the measured py
+median RPS against a ~16rps production-ceiling reference (fleet ~= 32 slots at ~2s/request) —
+this is never gated, just context for how irrelevant the sub-millisecond per-request deltas
+below are once GPU latency dominates.
 
 Timing: wall time is measured with `time.perf_counter()` throughout (monotonic, immune to
 the Windows/WSL wall-clock-adjustment quirks that would otherwise skew latency numbers).
@@ -50,6 +68,7 @@ import statistics
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -85,6 +104,12 @@ PY_WORKERS = int(os.environ.get("LTENGINE_BENCH_WORKERS", str(os.cpu_count() or 
 # per task instructions — never hardcode the URL into the gated path.
 DEFAULT_LLM_URL = os.environ.get("LTENGINE_BENCH_LLM_URL", "http://localhost:8000")
 
+# Informational-only reference for the C=32 headroom line (see module docstring
+# "Re-anchored 2026-08-15"): an approximate production serving ceiling of a 32-slot fleet
+# at ~2s/request. Never gated — just makes the sub-millisecond per-request deltas legible
+# against what production concurrency/latency actually looks like.
+PRODUCTION_CEILING_RPS = 16.0
+
 
 def _terminate(proc: subprocess.Popen) -> None:
     """Same teardown as `tests/differential/conftest.py`'s `make_pair` fixture:
@@ -97,6 +122,42 @@ def _terminate(proc: subprocess.Popen) -> None:
         proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
         proc.kill()
+
+
+@dataclass
+class MockProc:
+    base_url: str
+    proc: subprocess.Popen
+
+
+def _launch_mock() -> MockProc:
+    """Spawn the standalone OUT-OF-PROCESS mock upstream — its own OS process, not the
+    in-thread uvicorn `tests.differential.conftest.start_mock()` the differential suite
+    uses. That in-thread mock shares this process's GIL/event-loop with the httpx load
+    generator and self-saturates around C=32 (see module docstring "Re-anchored
+    2026-08-15"), which is fine for correctness checks but invalidates a throughput
+    measurement. This is the ONE mock-launching implementation shared by B1's default
+    gated mode (below) and `bench/sweep.py`'s wider characterization ladder — extracted
+    here (rather than duplicated) so there is a single place that knows how to spawn it.
+    """
+    port = h.free_port()
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "tests.differential.mock_upstream",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+        ],
+        cwd=str(h.REPO_ROOT),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    base = f"http://127.0.0.1:{port}"
+    h._wait_http(f"{base}/v1/models")
+    return MockProc(base, proc)
 
 
 async def run_arm(
@@ -226,14 +287,16 @@ async def bench_c8(mock_url: str, rust_url: str, py_url: str, n: int) -> list[st
 async def bench_c32(
     mock_url: str, rust_url: str, py_url: str, n: int, runs: int
 ) -> tuple[list[str], bool]:
-    """C=32: GATED on median(py_rps)/median(rust_rps) >= 0.70 across ``runs`` repeats.
-    p50/p95/p99 are printed per run but are explicitly INFORMATIONAL — the absolute
-    overhead bar at C=32 is retired (see module docstring "Amended gate").
+    """C=32: GATED on median(py_rps)/median(rust_rps) >= 0.60 across ``runs`` repeats,
+    measured against the OUT-OF-PROCESS mock (see module docstring "Re-anchored
+    2026-08-15"; was >= 0.70 against the in-process mock). p50/p95/p99 are printed per
+    run but are explicitly INFORMATIONAL — the absolute overhead bar at C=32 is retired
+    (see module docstring "Amended gate").
     """
     lines = [
         "",
         (
-            f"### C=32 — GATED: median RPS ratio (py/rust) >= 0.70 across {runs} runs. "
+            f"### C=32 — GATED: median RPS ratio (py/rust) >= 0.60 across {runs} runs. "
             "p50/p95/p99 below are INFORMATIONAL ONLY (not gated)."
         ),
         "",
@@ -259,17 +322,22 @@ async def bench_c32(
     median_rust_rps = statistics.median(rust_rps)
     median_py_rps = statistics.median(py_rps)
     ratio = median_py_rps / median_rust_rps
-    ok = ratio >= 0.70
+    ok = ratio >= 0.60
     lines.append("")
     lines.append(
         f"C=32 median RPS over {runs} runs: rust={median_rust_rps:.0f}, py={median_py_rps:.0f}, "
-        f"ratio={ratio:.2f} (gate: >= 0.70) -> {'PASS' if ok else 'FAIL'}"
+        f"ratio={ratio:.2f} (gate: >= 0.60) -> {'PASS' if ok else 'FAIL'}"
     )
     if not ok:
-        lines.append(f"**FAIL: C=32 median RPS ratio {ratio:.2f} < 0.70**")
+        lines.append(f"**FAIL: C=32 median RPS ratio {ratio:.2f} < 0.60**")
     lines.append(
         f"C=32 median p50 (informational, NOT gated): rust={statistics.median(rust_p50):.2f}ms, "
         f"py={statistics.median(py_p50):.2f}ms"
+    )
+    headroom = median_py_rps / PRODUCTION_CEILING_RPS
+    lines.append(
+        f"py median RPS = {median_py_rps:.0f} (≈ {headroom:.0f}x the "
+        f"~{PRODUCTION_CEILING_RPS:.0f}rps production-ceiling reference)"
     )
     return lines, ok
 
@@ -353,8 +421,12 @@ async def b2(real_llm_url: str) -> list[str]:
 
 
 async def b1(runs: int) -> list[str]:
-    rust_mock, _, _ = h.start_mock()
-    py_mock, _, _ = h.start_mock()
+    # OUT-OF-PROCESS mocks (re-anchored 2026-08-15 — see module docstring): each mock is
+    # its own OS process, sharing no GIL/event-loop with the httpx load generator driving
+    # it, so it doesn't self-saturate at C=32 the way the differential suite's in-thread
+    # `h.start_mock()` does.
+    rust_mock = _launch_mock()
+    py_mock = _launch_mock()
     rust = h._launch_rust(rust_mock.base_url, [])
     py = h._launch_py(py_mock.base_url, ["--workers", str(PY_WORKERS)])
     try:
@@ -371,6 +443,8 @@ async def b1(runs: int) -> list[str]:
     finally:
         _terminate(rust.proc)
         _terminate(py.proc)
+        _terminate(rust_mock.proc)
+        _terminate(py_mock.proc)
 
 
 def main() -> int:
@@ -394,7 +468,9 @@ def main() -> int:
     )
     args = ap.parse_args()
     if args.runs < 5:
-        ap.error("--runs must be >= 5 (the amended C=32 gate requires a median over at least 5 runs)")
+        ap.error(
+            "--runs must be >= 5 (the amended C=32 gate requires a median over at least 5 runs)"
+        )
     lines = asyncio.run(b2(args.b2)) if args.b2 else asyncio.run(b1(args.runs))
     print("\n".join(lines))
     return 1 if any("FAIL" in ln for ln in lines) else 0

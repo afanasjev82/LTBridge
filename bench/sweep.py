@@ -79,7 +79,6 @@ import random
 import statistics
 import subprocess
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -100,32 +99,11 @@ def n_for(c: int) -> int:
     return 2000 if c <= 8 else 3000
 
 
-@dataclass
-class MockProc:
-    base_url: str
-    proc: subprocess.Popen
-
-
-def _launch_mock() -> MockProc:
-    """Spawn the standalone out-of-process mock (see module docstring, point 1)."""
-    port = h.free_port()
-    proc = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "tests.differential.mock_upstream",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-        ],
-        cwd=str(h.REPO_ROOT),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    base = f"http://127.0.0.1:{port}"
-    h._wait_http(f"{base}/v1/models")
-    return MockProc(base, proc)
+# Out-of-process mock spawning (module docstring, point 1) now lives in
+# `bench.bench_overhead._launch_mock` / `.MockProc` — B1's default gated mode (re-anchored
+# 2026-08-15) needs the identical out-of-process mock this sweep pioneered, so the
+# implementation was extracted there instead of duplicated; this module just calls it via
+# `bo._launch_mock()` below.
 
 
 async def _measure_arms(c: int, n: int, urls: dict[str, str]) -> dict[str, dict]:
@@ -236,7 +214,7 @@ async def run_sweep(ladder: list[int]) -> tuple[list[str], dict]:
         f"[sweep] launching 4 mocks + 3 servers (rust, py-w1, py-w{PY_WORKERS_MAX})...",
         file=sys.stderr,
     )
-    mocks = {name: _launch_mock() for name in ("direct-mock", "rust", "py-w1", "py-w20")}
+    mocks = {name: bo._launch_mock() for name in ("direct-mock", "rust", "py-w1", "py-w20")}
     rust = h._launch_rust(mocks["rust"].base_url, [])
     pyw1 = h._launch_py(mocks["py-w1"].base_url, ["--workers", "1"])
     pyw20 = h._launch_py(mocks["py-w20"].base_url, ["--workers", str(PY_WORKERS_MAX)])
