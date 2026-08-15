@@ -2,9 +2,25 @@
 
 Python port of [LTEngine](https://github.com/afanasjev82/LTEngine) `--features api` mode.
 
-A LibreTranslate-compatible REST translation server that proxies requests to an external OpenAI-compatible LLM (e.g., vLLM, llama-server, Ollama, OpenAI). No local model loading — just a running LLM endpoint.
+A LibreTranslate-compatible REST translation server that proxies requests to an external OpenAI-compatible LLM (e.g., vLLM, LM Studio, llama-server, Ollama, OpenAI). No local model loading — just a running LLM endpoint.
 
 LTBridge is the productionized successor of the LTEngine api-mode port (formerly LTEngine-py).
+
+### Backend compatibility
+
+LTBridge is **inference-server agnostic**: it needs only `GET /v1/models` and
+`POST /v1/chat/completions` (non-streaming) from an **instruct-tuned** model. Verified
+end-to-end so far:
+
+| Server | Model | Result |
+|---|---|---|
+| vLLM (CUDA) | `gemma-4-12b-it` (AWQ-INT4) | ✅ reference deployment; full differential parity suite |
+| LM Studio (Apple MLX) | `qwen2.5-14b-instruct-mlx` | ✅ `/translate` verified live, zero code changes |
+
+Notes:
+- **Instruct models only** — the prompt is a system+user pair expecting a plain translated reply; base/completion-only models and reasoning-only endpoints won't return usable text.
+- **DeepSeek API** — not usable today: the served models (`deepseek-chat`/`deepseek-reasoner`) are not exposed as instruct-style completions in the way LTBridge's prompt expects, and the request carries the vLLM/SGLang `chat_template_kwargs: {"enable_thinking": false}` extension inherited from LTEngine (kept for byte-parity). Servers that reject unknown parameters would need an opt-in compat mode that omits it — not built yet.
+- Add a row above whenever you verify a new backend.
 
 `ltbridge` is a **byte-parity** port: its behavior is validated against a differential test suite that runs the Rust reference binary and this Python server side by side and diffs their responses (see [Development](#development)).
 
