@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -127,6 +128,49 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _resolve_model_or_exit(llm_url: str, llm_api_key: str) -> str:
+    """Synchronously pre-resolve the model name from ``{llm_url}/v1/models``
+    before Granian spawns, exiting the process with code 1 on any failure —
+    mirrors the Rust reference's fail-fast startup (``main.rs`` calls
+    ``llm_instance.resolve_model()`` and ``process::exit(1)``s on error).
+
+    This is the path a real CLI launch takes whenever ``--llm-model`` is
+    omitted. The async lifespan resolve in ``server/app.py`` (``if not
+    config.llm_model:``) stays in place as a fallback for programmatic
+    ``create_app()`` callers that never go through this module — but a
+    Granian worker spawned from here always sees an already-resolved
+    ``LTENGINE_LLM_MODEL`` env var (see the handoff below) and skips it.
+    """
+    import httpx
+
+    endpoint = f"{llm_url.rstrip('/')}/v1/models"
+    headers = {"Authorization": f"Bearer {llm_api_key}"} if llm_api_key else {}
+    try:
+        response = httpx.get(endpoint, headers=headers, timeout=10.0)
+        response.raise_for_status()
+        data = response.json()
+        models = data.get("data", []) if isinstance(data, dict) else []
+        model_id = models[0].get("id") if models and isinstance(models[0], dict) else None
+    except httpx.HTTPError as exc:
+        print(f"Failed to resolve model from server: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except ValueError as exc:
+        print(
+            f"Failed to resolve model from server: invalid JSON from {endpoint}: {exc}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if not model_id:
+        print(
+            f"Failed to resolve model from server: no models available at {endpoint}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    return str(model_id)
+
+
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
@@ -149,10 +193,16 @@ def main() -> None:
         verbose=args.verbose,
     )
 
-    print(f"Starting ltengine on http://{config.host}:{config.port}")
-    print(f"LLM backend: {config.llm_url}")
-    if config.llm_model:
-        print(f"Model: {config.llm_model}")
+    # Fail fast, before Granian spawns anything — matches the Rust reference's
+    # startup-time model resolution. `resolved_model` is None (never shown as
+    # "(resolved)") when --llm-model was given explicitly.
+    resolved_model: str | None = None
+    if not config.llm_model:
+        resolved_model = _resolve_model_or_exit(config.llm_url, config.llm_api_key)
+
+    from .server.banner import render_banner
+
+    print(render_banner(config, resolved_model, args.workers))
 
     from granian import Granian
     from granian.constants import Interfaces
@@ -174,13 +224,20 @@ def main() -> None:
     os.environ["LTENGINE_CHAR_LIMIT"] = str(config.char_limit)
     os.environ["LTENGINE_API_KEY"] = config.api_key
     os.environ["LTENGINE_LLM_API_KEY"] = config.llm_api_key
-    os.environ["LTENGINE_LLM_MODEL"] = config.llm_model
+    # Carry the already-resolved name through so a spawned worker's lifespan
+    # (`server/app.py`'s `if not config.llm_model:`) sees it pre-filled and
+    # skips its own /v1/models round-trip. `config.llm_model` wins when set
+    # (an explicit --llm-model); `resolved_model` fills the gap only when it
+    # was empty and this process already resolved it above.
+    os.environ["LTENGINE_LLM_MODEL"] = config.llm_model or resolved_model or ""
     os.environ["LTENGINE_LLM_MAX_TOKENS"] = str(config.llm_max_tokens)
     os.environ["LTENGINE_LLM_CHARS_PER_TOKEN"] = str(config.llm_chars_per_token)
     os.environ["LTENGINE_LLM_MAX_TOKENS_MULT"] = str(config.llm_max_tokens_mult)
     os.environ["LTENGINE_LLM_MAX_TOKENS_FLOOR"] = str(config.llm_max_tokens_floor)
     os.environ["LTENGINE_LLM_TIMEOUT"] = str(config.llm_timeout)
     os.environ["LTENGINE_VERBOSE"] = "1" if config.verbose else "0"
+
+    print(f"Listening on http://{config.host}:{config.port}")
 
     Granian(
         target="ltengine.server.app:app_factory",
