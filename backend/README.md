@@ -1,3 +1,3 @@
-# ltengine
+# ltbridge
 
-Python backend package for ltengine.
+Python backend package for ltbridge.

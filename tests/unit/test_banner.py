@@ -4,7 +4,7 @@ Console-output only: `render_banner` is a pure function of `(Config,
 resolved_model, workers) -> str`, so this file never touches the HTTP
 surface — that boundary is guarded by the differential suite instead (see
 tests/differential/). The last test here (`test_...exits_1`) is the one
-process-level check: it launches `python -m ltengine` for real, against a
+process-level check: it launches `python -m ltbridge` for real, against a
 dead port with no --llm-model, to prove the pre-resolve fail-fast path.
 """
 
@@ -17,8 +17,8 @@ import sys
 from pathlib import Path
 
 import pytest
-from ltengine.config import Config
-from ltengine.server.banner import render_banner
+from ltbridge.config import Config
+from ltbridge.server.banner import render_banner
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -57,14 +57,15 @@ def _make_config(**overrides: object) -> Config:
 def test_render_banner_contains_ascii_art_and_subtitle() -> None:
     text = render_banner(_make_config(), resolved_model="demo-model", workers=1)
     assert "Local AI Machine Translation" in text
-    # A distinctive, exact line from the Rust reference's ASCII art (banner.rs)
-    # — proves the art was copied verbatim, not paraphrased.
-    assert "/_____/_/ /_____/_/ /_/\\__, /_/_/ /_/\\___/" in text
+    # A distinctive, exact line from the LTBridge ASCII art (banner.py's
+    # _ASCII_ART, `figlet -f slant "LTBridge"`) — proves the art renders
+    # verbatim, not paraphrased.
+    assert "/_____/_/ /_____/_/  /_/\\__,_/\\__, /\\___/" in text
 
 
 def test_render_banner_version_line_shape() -> None:
     text = render_banner(_make_config(), resolved_model="demo-model", workers=1)
-    assert re.search(r"LTEngine-py \S+ · api · python \d+\.\d+\.\d+", text)
+    assert re.search(r"LTBridge \S+ · api · python \d+\.\d+\.\d+", text)
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +177,7 @@ def test_missing_llm_model_pre_resolve_failure_exits_1() -> None:
         [
             sys.executable,
             "-m",
-            "ltengine",
+            "ltbridge",
             "--llm-url",
             f"http://127.0.0.1:{dead_port}",
             "--host",
@@ -193,7 +194,7 @@ def test_missing_llm_model_pre_resolve_failure_exits_1() -> None:
     assert proc.returncode == 1, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
     assert "Failed to resolve model" in proc.stderr
     # The banner (which needs a resolved model) must never have printed.
-    assert "LTEngine-py" not in proc.stdout
+    assert "LTBridge" not in proc.stdout
 
 
 @pytest.mark.parametrize("workers", [1, 3])

@@ -16,21 +16,23 @@ from pathlib import Path
 
 from ..config import Config
 
-# Byte-for-byte the Rust reference's raw string (see banner.rs) — extracted
-# via its own `repr()` rather than retyped by hand, so the trailing spaces on
-# several lines (part of the art) survive exactly.
+# Same box/figlet convention (slant font, bordered box, "Local AI Machine
+# Translation" subtitle) as the Rust reference's raw string (see banner.rs),
+# but re-lettered for the LTBridge name — figlet -f slant "LTBridge",
+# reboxed to match the border/border-width rule the Rust art used. Trailing
+# spaces on several lines (part of the art) are intentional; do not trim.
 _ASCII_ART = (
     "\n"
-    " __________________________________________\n"
-    "    __  ____________            _          \n"
-    "   / / /_  __/ ____/___  ____ _(_)___  ___ \n"
-    "  / /   / / / __/ / __ \\/ __ `/ / __ \\/ _ \\\n"
-    " / /___/ / / /___/ / / / /_/ / / / / /  __/\n"
-    "/_____/_/ /_____/_/ /_/\\__, /_/_/ /_/\\___/ \n"
-    "                      /____/               \n"
+    " _________________________________________\n"
+    "    __  __________       _     __         \n"
+    "   / / /_  __/ __ )_____(_)___/ /___ ____ \n"
+    "  / /   / / / __  / ___/ / __  / __ `/ _ \\\n"
+    " / /___/ / / /_/ / /  / / /_/ / /_/ /  __/\n"
+    "/_____/_/ /_____/_/  /_/\\__,_/\\__, /\\___/ \n"
+    "                             /____/       \n"
     "\n"
     "        Local AI Machine Translation\n"
-    "___________________________________________"
+    "__________________________________________"
 )
 
 _GIT_TIMEOUT_S = 2.0
@@ -166,9 +168,9 @@ def render_banner(config: Config, resolved_model: str | None, workers: int) -> s
         The complete banner text, newline-terminated between sections but
         without a trailing newline (the caller's ``print()`` adds one).
     """
-    pkg_version = _pkg_version("ltengine", fallback="0.0.0")
+    pkg_version = _pkg_version("ltbridge", fallback="0.0.0")
     py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-    title = f"LTEngine-py {pkg_version} · api · python {py_version}"
+    title = f"LTBridge {pkg_version} · api · python {py_version}"
     separator = "─" * len(title)
 
     enabled, budget_rows = _token_budget_rows(config)

@@ -1,10 +1,12 @@
-# ltengine-py
+# LTBridge
 
 Python port of [LTEngine](https://github.com/afanasjev82/LTEngine) `--features api` mode.
 
 A LibreTranslate-compatible REST translation server that proxies requests to an external OpenAI-compatible LLM (e.g., vLLM, llama-server, Ollama, OpenAI). No local model loading — just a running LLM endpoint.
 
-`ltengine-py` is a **byte-parity** port: its behavior is validated against a differential test suite that runs the Rust reference binary and this Python server side by side and diffs their responses (see [Development](#development)).
+LTBridge is the productionized successor of the LTEngine api-mode port (formerly LTEngine-py).
+
+`ltbridge` is a **byte-parity** port: its behavior is validated against a differential test suite that runs the Rust reference binary and this Python server side by side and diffs their responses (see [Development](#development)).
 
 ## Requirements
 
@@ -20,13 +22,13 @@ A LibreTranslate-compatible REST translation server that proxies requests to an 
 uv sync
 
 # Start server (minimum: --llm-url is required)
-uv run ltengine --llm-url http://localhost:8000
+uv run ltbridge --llm-url http://localhost:8000
 
 # With explicit model and port
-uv run ltengine --llm-url http://localhost:8000 --llm-model my-model --port 5050
+uv run ltbridge --llm-url http://localhost:8000 --llm-model my-model --port 5050
 ```
 
-On startup, `ltengine` prints a banner with build info (git SHA, granian/litestar
+On startup, `ltbridge` prints a banner with build info (git SHA, granian/litestar
 versions) and the applied config, then — if `--llm-model` is omitted — resolves the
 model from `{llm-url}/v1/models` before binding. This resolve is **fail-fast**: it
 **exits with code 1** if it can't get a model name back (e.g. the LLM endpoint is
@@ -85,9 +87,9 @@ curl -X POST http://localhost:5050/translate \
 ## Project Structure
 
 ```
-ltengine-py/
-├── backend/                  # Python package: ltengine
-│   └── src/ltengine/
+LTBridge/
+├── backend/                  # Python package: ltbridge
+│   └── src/ltbridge/
 │       ├── core/              # transport-free, importable without Litestar
 │       │   ├── prompt.py        # Translation prompt builder
 │       │   ├── languages.py     # Language registry + whatlang-parity detection
@@ -105,7 +107,7 @@ ltengine-py/
 │       ├── llm_client.py      # OpenAI-compatible HTTP client
 │       └── __main__.py        # CLI entry point + Granian server startup
 ├── frontend/                  # Static web UI (own uv workspace package)
-│   └── src/ltengine_frontend/static/
+│   └── src/ltbridge_frontend/static/
 │       ├── index.html
 │       ├── app.js
 │       └── style.css
@@ -162,7 +164,7 @@ uv run python scripts/run_suite.py
 uv run pytest tests
 
 # Live sanity tests against a real vLLM container (smartech-ltengine-vllm), excluded from
-# the default run. Override the URL with LTENGINE_BENCH_LLM_URL when localhost:8000 isn't
+# the default run. Override the URL with LTBRIDGE_BENCH_LLM_URL when localhost:8000 isn't
 # reachable from inside WSL on this host.
 uv run --project backend pytest tests/live -m live -v
 
@@ -182,7 +184,7 @@ uv run --project backend python -m bench.sweep --concurrencies 16 --results benc
 uv run --project backend python -m bench.sweep --report --results bench/_sweep.json --out bench/_sweep_out.md
 
 # Real-vLLM ABAB throughput/latency bench (informational, not gated). One bounded,
-# foreground call per (round, C) cell pair against $LTENGINE_BENCH_LLM_URL (default
+# foreground call per (round, C) cell pair against $LTBRIDGE_BENCH_LLM_URL (default
 # http://localhost:8000):
 uv run --project backend python -m bench.real_bench --round 1 --c 1 --warmup --results bench/_real_bench.json
 uv run --project backend python -m bench.real_bench --assemble --results bench/_real_bench.json --out bench/_real_bench_out.md
@@ -196,14 +198,14 @@ uv run mypy backend
 
 Offline language detection is a **pure-Python port** of the Rust
 [`whatlang`](https://crates.io/crates/whatlang) 0.18.0 crate, living in
-`backend/src/ltengine/core/whatlang.py`. It replaced a vendored PyO3/maturin binding, so
+`backend/src/ltbridge/core/whatlang.py`. It replaced a vendored PyO3/maturin binding, so
 the repo now contains no Rust and `uv sync` needs no compiler.
 
 All of its tables — trigram profiles, per-script Unicode ranges, alphabets, `Lang`
 metadata, script→language mappings — are **generated**, never hand-transcribed:
 
 ```bash
-# Regenerate backend/src/ltengine/core/_whatlang_data.py from the crate source
+# Regenerate backend/src/ltbridge/core/_whatlang_data.py from the crate source
 # (auto-locates ~/.cargo/registry/src/*/whatlang-0.18.0; needs rustc only to snapshot
 #  the Rust std case tables, and writes no Rust into this repo)
 uv run python scripts/gen_whatlang_data.py

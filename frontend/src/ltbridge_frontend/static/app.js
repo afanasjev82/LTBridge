@@ -1,4 +1,4 @@
-/* ltengine frontend JS */
+/* ltbridge frontend JS */
 
 (async () => {
   const sourceSelect = document.getElementById("source-lang");

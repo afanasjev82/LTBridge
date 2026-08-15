@@ -1,5 +1,7 @@
 # Task 13 — B1 wrapper-overhead / B2 e2e sanity benchmark report
 
+(project renamed LTEngine-py → LTBridge after these runs; commands below use the old names)
+
 Date: 2026-08-12 (original investigation) / 2026-08-12 (fix wave, amended gate)
 Repo: `LTEngine-py` @ `development`
 Oracle (Rust reference) commit: `.rust-ref` @ `3070771` (`git -C .rust-ref rev-parse --short HEAD`)
