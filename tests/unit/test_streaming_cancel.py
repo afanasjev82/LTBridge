@@ -18,7 +18,7 @@ import gc
 import pytest
 from litestar.response import Response, Stream
 from litestar.serialization import default_serializer, encode_json
-from ltengine.server.streaming import GRACE_PERIOD_S, HEARTBEAT_INTERVAL_S, respond_with_grace
+from ltbridge.server.streaming import GRACE_PERIOD_S, HEARTBEAT_INTERVAL_S, respond_with_grace
 
 
 async def test_disconnect_cancels_work() -> None:

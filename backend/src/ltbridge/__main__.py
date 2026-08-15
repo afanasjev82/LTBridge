@@ -1,4 +1,4 @@
-"""CLI entry point for ltengine.
+"""CLI entry point for ltbridge.
 
 Parses command-line arguments (mirroring LTEngine's --features api flags),
 builds a Config, then starts a Granian ASGI server.
@@ -13,7 +13,7 @@ import sys
 
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="ltengine",
+        prog="ltbridge",
         description="LibreTranslate-compatible translation server backed by an OpenAI-compatible LLM.",
     )
     p.add_argument(
@@ -139,7 +139,7 @@ def _resolve_model_or_exit(llm_url: str, llm_api_key: str) -> str:
     config.llm_model:``) stays in place as a fallback for programmatic
     ``create_app()`` callers that never go through this module — but a
     Granian worker spawned from here always sees an already-resolved
-    ``LTENGINE_LLM_MODEL`` env var (see the handoff below) and skips it.
+    ``LTBRIDGE_LLM_MODEL`` env var (see the handoff below) and skips it.
     """
     import httpx
 
@@ -215,32 +215,32 @@ def main() -> None:
     # is not picklable — passing `target=<app instance>` only works on 'fork' platforms,
     # where the child inherits the parent's memory instead of unpickling. So we use
     # Granian's documented factory-import pattern: an import-string target
-    # ("ltengine.server.app:app_factory") + factory=True, and hand the config to the worker via
+    # ("ltbridge.server.app:app_factory") + factory=True, and hand the config to the worker via
     # environment variables (Config.from_env(), read inside app_factory()) instead of a
     # live object.
-    os.environ["LTENGINE_LLM_URL"] = config.llm_url
-    os.environ["LTENGINE_HOST"] = config.host
-    os.environ["LTENGINE_PORT"] = str(config.port)
-    os.environ["LTENGINE_CHAR_LIMIT"] = str(config.char_limit)
-    os.environ["LTENGINE_API_KEY"] = config.api_key
-    os.environ["LTENGINE_LLM_API_KEY"] = config.llm_api_key
+    os.environ["LTBRIDGE_LLM_URL"] = config.llm_url
+    os.environ["LTBRIDGE_HOST"] = config.host
+    os.environ["LTBRIDGE_PORT"] = str(config.port)
+    os.environ["LTBRIDGE_CHAR_LIMIT"] = str(config.char_limit)
+    os.environ["LTBRIDGE_API_KEY"] = config.api_key
+    os.environ["LTBRIDGE_LLM_API_KEY"] = config.llm_api_key
     # Carry the already-resolved name through so a spawned worker's lifespan
     # (`server/app.py`'s `if not config.llm_model:`) sees it pre-filled and
     # skips its own /v1/models round-trip. `config.llm_model` wins when set
     # (an explicit --llm-model); `resolved_model` fills the gap only when it
     # was empty and this process already resolved it above.
-    os.environ["LTENGINE_LLM_MODEL"] = config.llm_model or resolved_model or ""
-    os.environ["LTENGINE_LLM_MAX_TOKENS"] = str(config.llm_max_tokens)
-    os.environ["LTENGINE_LLM_CHARS_PER_TOKEN"] = str(config.llm_chars_per_token)
-    os.environ["LTENGINE_LLM_MAX_TOKENS_MULT"] = str(config.llm_max_tokens_mult)
-    os.environ["LTENGINE_LLM_MAX_TOKENS_FLOOR"] = str(config.llm_max_tokens_floor)
-    os.environ["LTENGINE_LLM_TIMEOUT"] = str(config.llm_timeout)
-    os.environ["LTENGINE_VERBOSE"] = "1" if config.verbose else "0"
+    os.environ["LTBRIDGE_LLM_MODEL"] = config.llm_model or resolved_model or ""
+    os.environ["LTBRIDGE_LLM_MAX_TOKENS"] = str(config.llm_max_tokens)
+    os.environ["LTBRIDGE_LLM_CHARS_PER_TOKEN"] = str(config.llm_chars_per_token)
+    os.environ["LTBRIDGE_LLM_MAX_TOKENS_MULT"] = str(config.llm_max_tokens_mult)
+    os.environ["LTBRIDGE_LLM_MAX_TOKENS_FLOOR"] = str(config.llm_max_tokens_floor)
+    os.environ["LTBRIDGE_LLM_TIMEOUT"] = str(config.llm_timeout)
+    os.environ["LTBRIDGE_VERBOSE"] = "1" if config.verbose else "0"
 
     print(f"Listening on http://{config.host}:{config.port}")
 
     Granian(
-        target="ltengine.server.app:app_factory",
+        target="ltbridge.server.app:app_factory",
         factory=True,
         address=config.host,
         port=config.port,

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 @dataclass
 class Config:
-    """Runtime configuration for ltengine, sourced from CLI arguments."""
+    """Runtime configuration for ltbridge, sourced from CLI arguments."""
 
     llm_url: str
     host: str = "0.0.0.0"
@@ -26,7 +26,7 @@ class Config:
 
     @classmethod
     def from_env(cls) -> Config:
-        """Rebuild a Config from the LTENGINE_* environment variables.
+        """Rebuild a Config from the LTBRIDGE_* environment variables.
 
         Used by `app.app_factory()` inside a Granian worker process, which on
         Windows/macOS is spawned via `multiprocessing`'s 'spawn' start method (no
@@ -36,17 +36,17 @@ class Config:
         parsed CLI args before starting Granian.
         """
         return cls(
-            llm_url=os.environ["LTENGINE_LLM_URL"],
-            host=os.environ.get("LTENGINE_HOST", "0.0.0.0"),
-            port=int(os.environ.get("LTENGINE_PORT", "5050")),
-            char_limit=int(os.environ.get("LTENGINE_CHAR_LIMIT", "5000")),
-            api_key=os.environ.get("LTENGINE_API_KEY", ""),
-            llm_api_key=os.environ.get("LTENGINE_LLM_API_KEY", ""),
-            llm_model=os.environ.get("LTENGINE_LLM_MODEL", ""),
-            llm_max_tokens=int(os.environ.get("LTENGINE_LLM_MAX_TOKENS", "0")),
-            llm_chars_per_token=float(os.environ.get("LTENGINE_LLM_CHARS_PER_TOKEN", "0.0")),
-            llm_max_tokens_mult=float(os.environ.get("LTENGINE_LLM_MAX_TOKENS_MULT", "0.0")),
-            llm_max_tokens_floor=int(os.environ.get("LTENGINE_LLM_MAX_TOKENS_FLOOR", "64")),
-            llm_timeout=float(os.environ.get("LTENGINE_LLM_TIMEOUT", "120.0")),
-            verbose=os.environ.get("LTENGINE_VERBOSE", "") == "1",
+            llm_url=os.environ["LTBRIDGE_LLM_URL"],
+            host=os.environ.get("LTBRIDGE_HOST", "0.0.0.0"),
+            port=int(os.environ.get("LTBRIDGE_PORT", "5050")),
+            char_limit=int(os.environ.get("LTBRIDGE_CHAR_LIMIT", "5000")),
+            api_key=os.environ.get("LTBRIDGE_API_KEY", ""),
+            llm_api_key=os.environ.get("LTBRIDGE_LLM_API_KEY", ""),
+            llm_model=os.environ.get("LTBRIDGE_LLM_MODEL", ""),
+            llm_max_tokens=int(os.environ.get("LTBRIDGE_LLM_MAX_TOKENS", "0")),
+            llm_chars_per_token=float(os.environ.get("LTBRIDGE_LLM_CHARS_PER_TOKEN", "0.0")),
+            llm_max_tokens_mult=float(os.environ.get("LTBRIDGE_LLM_MAX_TOKENS_MULT", "0.0")),
+            llm_max_tokens_floor=int(os.environ.get("LTBRIDGE_LLM_MAX_TOKENS_FLOOR", "64")),
+            llm_timeout=float(os.environ.get("LTBRIDGE_LLM_TIMEOUT", "120.0")),
+            verbose=os.environ.get("LTBRIDGE_VERBOSE", "") == "1",
         )

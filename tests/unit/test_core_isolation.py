@@ -1,4 +1,4 @@
-"""Guard: ``ltengine.core`` imports without Litestar installed.
+"""Guard: ``ltbridge.core`` imports without Litestar installed.
 
 Task 12's P2/P3 mount contract requires `core/` to stay transport-free — no
 server dependency anywhere under it. Poisoning `sys.modules['litestar']` in a
@@ -15,8 +15,8 @@ def test_core_imports_without_litestar() -> None:
     code = (
         "import sys;"
         "sys.modules['litestar'] = None;"  # poison: any litestar import will fail loudly
-        "import ltengine.core.prompt, ltengine.core.languages,"
-        " ltengine.core.token_budget, ltengine.core.errors, ltengine.core.formatting;"
+        "import ltbridge.core.prompt, ltbridge.core.languages,"
+        " ltbridge.core.token_budget, ltbridge.core.errors, ltbridge.core.formatting;"
         "print('ok')"
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)

@@ -1,6 +1,6 @@
 """Zero-divergence gate for the pure-Python whatlang port.
 
-Compares :func:`ltengine.core.whatlang.detect` against an *oracle* on a large
+Compares :func:`ltbridge.core.whatlang.detect` against an *oracle* on a large
 generated corpus and prints a divergence count that must be ``0``.
 
 Two oracle modes:
@@ -47,9 +47,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "backend" / "src"))
 sys.path.insert(0, str(ROOT))
 
-from ltengine.core import _whatlang_data as D
-from ltengine.core import whatlang
-from ltengine.core.languages import _LANG_DEFS
+from ltbridge.core import _whatlang_data as D
+from ltbridge.core import whatlang
+from ltbridge.core.languages import _LANG_DEFS
 
 DEFAULT_DUMP = ROOT / "tests" / "fixtures" / "detection_sweep.json.gz"
 

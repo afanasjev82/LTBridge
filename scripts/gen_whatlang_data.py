@@ -1,6 +1,6 @@
-"""Generate ``backend/src/ltengine/core/_whatlang_data.py`` from the whatlang crate.
+"""Generate ``backend/src/ltbridge/core/_whatlang_data.py`` from the whatlang crate.
 
-Everything the pure-Python detector (``ltengine.core.whatlang``) needs as *data*
+Everything the pure-Python detector (``ltbridge.core.whatlang``) needs as *data*
 is parsed straight out of the ``whatlang`` Rust crate's own source files — the
 trigram profiles, the per-script Unicode range tables, the alphabet strings, the
 ``Lang``/``Script`` metadata and the script->language mappings. Nothing is
@@ -39,7 +39,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT_PATH = ROOT / "backend" / "src" / "ltengine" / "core" / "_whatlang_data.py"
+OUT_PATH = ROOT / "backend" / "src" / "ltbridge" / "core" / "_whatlang_data.py"
 
 # ---------------------------------------------------------------------------
 # Rust source snippets we parse

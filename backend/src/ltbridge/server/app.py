@@ -22,7 +22,7 @@ from litestar.status_codes import (
     HTTP_405_METHOD_NOT_ALLOWED,
 )
 from litestar.types import LifeSpanReceive, LifeSpanScope, LifeSpanSend, Receive, Scope, Send
-from ltengine_frontend import get_static_dir
+from ltbridge_frontend import get_static_dir
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     CollectorRegistry,
@@ -49,7 +49,7 @@ _STATIC_ROOT: Path = _STATIC_DIR.resolve()  # cached once — never re-resolved 
 # slash (e.g. "/translate/") is NOT a member (final-review CRITICAL 1: it
 # used to be excluded via `path.rstrip("/")`, which let Litestar's own
 # trailing-slash route normalization silently 200-translate `POST
-# /translate/`). `_LTEngineApp.__call__` below checks membership directly and
+# /translate/`). `_LTBridgeApp.__call__` below checks membership directly and
 # is the ONLY place that decides whether a path is "exact" — every other
 # path, "/translate/" included, is fully owned by the outer layer and never
 # reaches Litestar's router at all.
@@ -175,7 +175,7 @@ def _resolve_static_path(path: str) -> tuple[Path, str] | None:
     static-file service like any other miss, and 404s/405s there. Litestar's
     router, left to its own devices, silently NORMALIZES a trailing slash
     onto the exact route (so ``POST /translate/`` used to 200-translate) —
-    the fix is that the caller (``_LTEngineApp.__call__``) now never hands a
+    the fix is that the caller (``_LTBridgeApp.__call__``) now never hands a
     non-exact path to Litestar's router at all; see there for the full
     ownership split.
     """
@@ -218,7 +218,7 @@ def _not_found_handler(request: Request[Any, Any, State], exc: NotFoundException
     # unmatched path falls through to the embedded static-file service, whose
     # miss path is actix's bare `HttpResponse::NotFound().body("Not found")` —
     # plain text, NO Content-Type header at all. Effectively unreachable
-    # after the final-review CRITICAL 1 fix (`_LTEngineApp.__call__` now owns
+    # after the final-review CRITICAL 1 fix (`_LTBridgeApp.__call__` now owns
     # every non-exact-API path itself and never hands one to Litestar's
     # router, so Litestar's own routing never raises `NotFoundException` in
     # practice) — kept registered defensively, and built through
@@ -288,7 +288,7 @@ def create_app(config: Config) -> Litestar:
         # its logger propagates to root. Under concurrent load this is a real,
         # measured cost (B1 profiling in bench/REPORT.md: cProfile traced roughly a
         # third of hot-path time to LogRecord construction + the queue-handler
-        # dispatch it feeds — see the `logging_config=None` note on `_LTEngineApp`
+        # dispatch it feeds — see the `logging_config=None` note on `_LTBridgeApp`
         # below for the other half of this fix). httpx's `_client.py` calls
         # `logger.info(...)` at exactly two call sites and nowhere else — it has no
         # WARNING/ERROR logging of its own; a transport failure (connect refused,
@@ -331,6 +331,11 @@ def create_app(config: Config) -> Litestar:
     # see `__call__` below). The histogram buckets stay our own (amended,
     # LLM-latency-appropriate) set, not actix_web_prom's tiny sub-10s
     # defaults — only the name/labels are adopted, not the bucket boundaries.
+    #
+    # NOTE (LTBridge rename): these two metric names keep the `ltengine_`
+    # prefix deliberately — it is the actix_web_prom COMPATIBILITY schema
+    # (drop-in dashboards vs. the Rust LTEngine server), not a branding
+    # choice, so it does NOT follow the ltengine -> ltbridge project rename.
     requests_total = Counter(
         "ltengine_http_requests_total",
         "Total number of HTTP requests",
@@ -401,7 +406,7 @@ def create_app(config: Config) -> Litestar:
     # routing succeeded, or a fixed `"__unmatched__"` sentinel when none of
     # those resolved (never the raw request path, which is attacker-
     # controlled and would blow up label cardinality on its own).
-    class _LTEngineApp(Litestar):
+    class _LTBridgeApp(Litestar):
         async def __call__(
             self,
             scope: Scope | LifeSpanScope,
@@ -495,7 +500,7 @@ def create_app(config: Config) -> Litestar:
                     endpoint=path_label, method=method, status=status_code
                 ).observe(duration)
 
-    return _LTEngineApp(
+    return _LTBridgeApp(
         route_handlers=[
             router,
             metrics,
@@ -547,8 +552,8 @@ def app_factory() -> Litestar:
     (e.g. the `lifespan` context manager), so passing the instance itself across
     the process boundary fails there (it only worked on 'fork' platforms, where
     the child inherits memory instead of unpickling). `__main__.py` sets the
-    `LTENGINE_*` environment variables from the parsed CLI args and points
-    Granian's `target` at `"ltengine.server.app:app_factory"` with `factory=True`.
+    `LTBRIDGE_*` environment variables from the parsed CLI args and points
+    Granian's `target` at `"ltbridge.server.app:app_factory"` with `factory=True`.
     """
     from ..config import Config
 

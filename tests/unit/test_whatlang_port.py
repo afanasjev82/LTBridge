@@ -9,9 +9,9 @@ without any recorded case changing.
 from __future__ import annotations
 
 import pytest
-from ltengine.core import _whatlang_data as D
-from ltengine.core import whatlang
-from ltengine.core.languages import _DETECT_ALLOWLIST, detect_language
+from ltbridge.core import _whatlang_data as D
+from ltbridge.core import whatlang
+from ltbridge.core.languages import _DETECT_ALLOWLIST, detect_language
 
 # Rust's `sort_unstable` runs `small_sort_general` — which is stable — at or
 # below this length, and a genuinely unstable quicksort above it. Measured

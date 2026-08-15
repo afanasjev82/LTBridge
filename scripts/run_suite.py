@@ -4,7 +4,7 @@ Environment pivot (2026-08-12, see .superpowers/sdd/progress.md): the native
 Windows Rust toolchain is broken (missing x64 SDK libs), so the Rust oracle
 build AND the differential suite that needs it are WSL-only. (The server
 itself is pure Python now — the whatlang PyO3 binding that also forced this
-was replaced by ltengine.core.whatlang — but the oracle still needs cargo.)
+was replaced by ltbridge.core.whatlang — but the oracle still needs cargo.)
 This script makes "one command" true from either side:
 
 - On Windows, it re-execs itself inside WSL (``wsl.exe -d Ubuntu-20.04``),

@@ -5,7 +5,7 @@ Usage:
   uv run --project backend python bench/bench_overhead.py            # B1 (mock)
   uv run --project backend python bench/bench_overhead.py --runs 8   # B1, 8 repeats at C=32
   uv run --project backend python bench/bench_overhead.py --b2       # B2 against
-      $LTENGINE_BENCH_LLM_URL (default http://localhost:8000)
+      $LTBRIDGE_BENCH_LLM_URL (default http://localhost:8000)
   uv run --project backend python bench/bench_overhead.py --b2 URL   # B2 against an
       explicit URL
 
@@ -74,7 +74,7 @@ from pathlib import Path
 import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from ltengine.core.prompt import PromptBuilder
+from ltbridge.core.prompt import PromptBuilder
 
 from bench.texts import TEXTS, salted
 from tests.differential import conftest as h
@@ -86,7 +86,7 @@ BODY = {"q": "Hello, world", "source": "en", "target": "ru"}
 
 # The Rust reference (actix-web, no `.workers(N)` call in main.rs) defaults to one OS
 # thread per CPU core — real parallelism for its per-request CPU-bound work. Granian's
-# `workers` defaults to 1 in ltengine.__main__ (kept there for every other caller —
+# `workers` defaults to 1 in ltbridge.__main__ (kept there for every other caller —
 # differential/live tests want one predictable process); a single Python worker process
 # is GIL-bound to one core regardless of how many requests are concurrently in flight, so
 # B1 hands the py arm the same per-core parallelism Rust already gets for free, via
@@ -96,13 +96,13 @@ BODY = {"q": "Hello, world", "source": "en", "target": "ru"}
 # profiling; `--workers` is kept because it is correct in principle (real parallelism vs.
 # a GIL-bound single process) and does not measurably hurt, but is not claimed as a proven
 # win on its own. See bench/REPORT.md, "B1 optimizations" / "attribution".
-PY_WORKERS = int(os.environ.get("LTENGINE_BENCH_WORKERS", str(os.cpu_count() or 4)))
+PY_WORKERS = int(os.environ.get("LTBRIDGE_BENCH_WORKERS", str(os.cpu_count() or 4)))
 
 # Discovered default for B2 (see task-13-report.md "WSL LLM URL resolution"): vLLM is
 # reachable directly at localhost:8000 from inside WSL on this host. Override via
-# LTENGINE_BENCH_LLM_URL when that isn't true (e.g. a different WSL networking mode),
+# LTBRIDGE_BENCH_LLM_URL when that isn't true (e.g. a different WSL networking mode),
 # per task instructions — never hardcode the URL into the gated path.
-DEFAULT_LLM_URL = os.environ.get("LTENGINE_BENCH_LLM_URL", "http://localhost:8000")
+DEFAULT_LLM_URL = os.environ.get("LTBRIDGE_BENCH_LLM_URL", "http://localhost:8000")
 
 # Informational-only reference for the C=32 headroom line (see module docstring
 # "Re-anchored 2026-08-15"): an approximate production serving ceiling of a 32-slot fleet
@@ -357,7 +357,7 @@ async def _warm_up_engine(url: str) -> None:
     used for this — a plain upstream call keeps the warm-up itself out of
     either arm's own measured path.
 
-    The warm-up prompt is built through the SAME `PromptBuilder` ltengine's own
+    The warm-up prompt is built through the SAME `PromptBuilder` ltbridge's own
     `/translate` handler uses (source=auto, target=English — matching B2's real
     request shape), not a generic placeholder message, so the shared system-prompt
     prefix vLLM's automatic prefix caching keys off is primed byte-for-byte
@@ -455,7 +455,7 @@ def main() -> int:
         const=DEFAULT_LLM_URL,
         default=None,
         metavar="LLM_URL",
-        help="run B2 against a real vLLM URL (default: $LTENGINE_BENCH_LLM_URL or "
+        help="run B2 against a real vLLM URL (default: $LTBRIDGE_BENCH_LLM_URL or "
         f"{DEFAULT_LLM_URL} when the flag is given with no value)",
     )
     ap.add_argument(

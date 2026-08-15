@@ -18,10 +18,10 @@ from typing import Any
 
 import pytest
 from litestar.testing import TestClient
-from ltengine.config import Config
-from ltengine.core.languages import DetectionResult, Language
-from ltengine.server.app import create_app
-from ltengine.server.routes import _detection_json, _translate_response_body
+from ltbridge.config import Config
+from ltbridge.core.languages import DetectionResult, Language
+from ltbridge.server.app import create_app
+from ltbridge.server.routes import _detection_json, _translate_response_body
 
 _LANG = Language(code="ru", name="Russian", targets=["en"], internal_code="ru")
 _DETECTED = DetectionResult(language=_LANG, confidence=87)

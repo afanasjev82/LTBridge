@@ -99,23 +99,23 @@ def _launch_rust(mock_url: str, extra_flags: list[str]) -> ServerHandle:
 
 
 # Python server launch command (verified working, Task 3):
-#   <sys.executable> -m ltengine --llm-url <mock_url> --host 127.0.0.1 --port <port> ...
+#   <sys.executable> -m ltbridge --llm-url <mock_url> --host 127.0.0.1 --port <port> ...
 #
-# `python -m ltengine` works because this repo is a single uv workspace (backend + frontend
-# share ONE venv at the repo root, confirmed: no backend/.venv exists) with `ltengine`
-# installed editable into it (`.venv/Lib/site-packages/_editable_impl_ltengine.pth`) and a
-# `[project.scripts] ltengine = ...` console entry point registered
-# (`.venv/Scripts/ltengine.exe`). `__main__.py` has an `if __name__ == "__main__": main()`
-# guard, so `python -m ltengine` dispatches into the same `main()` the console script calls.
+# `python -m ltbridge` works because this repo is a single uv workspace (backend + frontend
+# share ONE venv at the repo root, confirmed: no backend/.venv exists) with `ltbridge`
+# installed editable into it (`.venv/Lib/site-packages/_editable_impl_ltbridge.pth`) and a
+# `[project.scripts] ltbridge = ...` console entry point registered
+# (`.venv/Scripts/ltbridge.exe`). `__main__.py` has an `if __name__ == "__main__": main()`
+# guard, so `python -m ltbridge` dispatches into the same `main()` the console script calls.
 # As long as pytest itself is launched via `uv run` (from repo root or with
 # `--project backend` — both resolve to the same shared venv here), `sys.executable` inside
-# the pytest process already IS that venv's interpreter, so plain `sys.executable -m ltengine`
+# the pytest process already IS that venv's interpreter, so plain `sys.executable -m ltbridge`
 # needs no `uv run` re-wrapping and stays fast to start. Verified directly:
-#   .venv/Scripts/python.exe -m ltengine --help   (from repo root AND from backend/) -> works.
+#   .venv/Scripts/python.exe -m ltbridge --help   (from repo root AND from backend/) -> works.
 def _launch_py(mock_url: str, extra_flags: list[str]) -> ServerHandle:
     port = free_port()
     proc = subprocess.Popen(
-        [sys.executable, "-m", "ltengine", "--llm-url", mock_url, "--host", "127.0.0.1",
+        [sys.executable, "-m", "ltbridge", "--llm-url", mock_url, "--host", "127.0.0.1",
          "--port", str(port), *extra_flags],
         cwd=str(REPO_ROOT / "backend"),
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

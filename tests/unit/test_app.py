@@ -9,8 +9,8 @@ follow/don't-follow difference through the wire).
 from __future__ import annotations
 
 from litestar.testing import TestClient
-from ltengine.config import Config
-from ltengine.server.app import create_app
+from ltbridge.config import Config
+from ltbridge.server.app import create_app
 
 
 def test_shared_http_client_matches_reqwest_redirect_defaults() -> None:

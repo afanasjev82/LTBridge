@@ -17,9 +17,9 @@ from __future__ import annotations
 import re
 
 from litestar.testing import TestClient
-from ltengine.config import Config
-from ltengine.server.app import _resolve_static_path, create_app
-from ltengine_frontend import get_static_dir
+from ltbridge.config import Config
+from ltbridge.server.app import _resolve_static_path, create_app
+from ltbridge_frontend import get_static_dir
 
 
 def _client() -> TestClient:
@@ -199,7 +199,7 @@ def test_exact_match_only_excludes_bare_api_path() -> None:
     # Final-review CRITICAL 1 regression guard: the OLD exclusion was
     # `path in _API_PATHS or path.rstrip("/") in _API_PATHS`, which made
     # `_resolve_static_path` itself the (wrong) authority on whether
-    # "/translate/" was "an API path" — `_LTEngineApp.__call__` now owns that
+    # "/translate/" was "an API path" — `_LTBridgeApp.__call__` now owns that
     # decision via an exact `path in _API_PATHS` check of its own, and
     # `_resolve_static_path` no longer special-cases the trailing-slash form
     # at all. The exact path is still excluded (never a candidate asset).

@@ -2,7 +2,7 @@
 members = ["backend", "frontend"]
 
 [tool.uv.sources]
-ltengine-frontend = { workspace = true }
+ltbridge-frontend = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

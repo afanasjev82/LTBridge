@@ -1,7 +1,7 @@
 [project]
-name = "ltengine-frontend"
+name = "ltbridge-frontend"
 version = "0.1.0"
-description = "Static web UI assets for ltengine"
+description = "Static web UI assets for ltbridge"
 requires-python = ">=3.12"
 dependencies = []
 
@@ -10,7 +10,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ltengine_frontend"]
+packages = ["src/ltbridge_frontend"]
 
 [tool.hatch.build.targets.wheel.sources]
-"src/ltengine_frontend/static" = "ltengine_frontend/static"
+"src/ltbridge_frontend/static" = "ltbridge_frontend/static"

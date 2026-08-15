@@ -1,7 +1,7 @@
 """Pure-Python port of the whatlang language detector (crate 0.18.0).
 
 This replaces the vendored PyO3 binding (``whatlang_py``) that used to back
-:mod:`ltengine.core.languages`. It reproduces, operation for operation, the call
+:mod:`ltbridge.core.languages`. It reproduces, operation for operation, the call
 path that binding exercised — ``Detector::with_allowlist(langs).detect(text)`` —
 so that ``/detect`` and ``source="auto"`` stay byte-identical to the Rust
 LTEngine oracle. All tables live in the generated :mod:`._whatlang_data`; this

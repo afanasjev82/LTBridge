@@ -9,7 +9,7 @@ gate. Nothing here is imported by, or changes the behavior of, that gated defaul
 Protocol summary (binding — see the design review that scoped this task):
   - C ladder {1, 2, 4, 8, 16, 32}. Both servers launched with ``--llm-url`` pointed at the
     same real engine (default ``http://localhost:8000``, override via
-    ``LTENGINE_BENCH_LLM_URL`` — reuses `bench.bench_overhead.DEFAULT_LLM_URL`, never
+    ``LTBRIDGE_BENCH_LLM_URL`` — reuses `bench.bench_overhead.DEFAULT_LLM_URL`, never
     hardcoded on the gated path). py runs at the SHIPPED DEFAULT ``--workers`` (1) — no
     `--workers N` override, unlike B1's mock bench.
   - TIME-BOXED cells: each (arm, C) cell runs for `CELL_DURATION_S` (90s) wall-clock,
@@ -389,7 +389,7 @@ def main() -> int:
         default=bo.DEFAULT_LLM_URL,
         metavar="URL",
         help=f"real OpenAI-compatible upstream (default: {bo.DEFAULT_LLM_URL}, "
-        "$LTENGINE_BENCH_LLM_URL)",
+        "$LTBRIDGE_BENCH_LLM_URL)",
     )
     ap.add_argument(
         "--results", metavar="PATH", help="JSON accumulator file to merge this cell pair into"

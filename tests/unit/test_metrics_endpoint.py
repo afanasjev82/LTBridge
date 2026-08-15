@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 
 from litestar.testing import TestClient
-from ltengine.config import Config
-from ltengine.server.app import create_app
+from ltbridge.config import Config
+from ltbridge.server.app import create_app
 
 
 def test_metrics_endpoint_present() -> None:

@@ -25,7 +25,7 @@ TRANSIENT_UPSTREAM = {429, 502, 503, 504}
 
 
 class LlmError(Exception):
-    """Raised by :class:`~ltengine.llm_client.LLMClient` on any upstream failure.
+    """Raised by :class:`~ltbridge.llm_client.LLMClient` on any upstream failure.
 
     Carries the exact HTTP status + message the app-level exception handler
     emits as ``{"error": message}`` — the Python analogue of Rust's

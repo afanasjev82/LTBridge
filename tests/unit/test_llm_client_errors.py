@@ -20,8 +20,8 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from ltengine.core.errors import LlmError
-from ltengine.llm_client import LLMClient
+from ltbridge.core.errors import LlmError
+from ltbridge.llm_client import LLMClient
 
 
 class _RaisingClient:

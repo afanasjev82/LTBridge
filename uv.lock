@@ -8,8 +8,8 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "ltengine",
-    "ltengine-frontend",
+    "ltbridge",
+    "ltbridge-frontend",
 ]
 
 [[package]]
@@ -457,14 +457,14 @@ wheels = [
 ]
 
 [[package]]
-name = "ltengine"
+name = "ltbridge"
 version = "0.1.0"
 source = { editable = "backend" }
 dependencies = [
     { name = "granian", extra = ["uvloop"] },
     { name = "httpx" },
     { name = "litestar", extra = ["standard"] },
-    { name = "ltengine-frontend" },
+    { name = "ltbridge-frontend" },
     { name = "prometheus-client" },
 ]
 
@@ -484,7 +484,7 @@ requires-dist = [
     { name = "granian", extras = ["uvloop"], specifier = ">=2.6.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "litestar", extras = ["standard"], specifier = ">=2.19.0" },
-    { name = "ltengine-frontend", editable = "frontend" },
+    { name = "ltbridge-frontend", editable = "frontend" },
     { name = "prometheus-client", specifier = ">=0.20" },
 ]
 
@@ -500,7 +500,7 @@ dev = [
 ]
 
 [[package]]
-name = "ltengine-frontend"
+name = "ltbridge-frontend"
 version = "0.1.0"
 source = { editable = "frontend" }
 

@@ -20,9 +20,9 @@ import json
 from pathlib import Path
 
 import pytest
-from ltengine.core import _whatlang_data as D
-from ltengine.core import whatlang
-from ltengine.core.languages import _DETECT_ALLOWLIST
+from ltbridge.core import _whatlang_data as D
+from ltbridge.core import whatlang
+from ltbridge.core.languages import _DETECT_ALLOWLIST
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "detection_sweep.json.gz"
 

@@ -1,4 +1,4 @@
-"""ltengine.core — transport-free translation logic.
+"""ltbridge.core — transport-free translation logic.
 
 Importable without Litestar (or any server dependency) installed: prompt
 building, language registry + detection, output-token budgeting, formatting

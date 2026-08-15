@@ -1,7 +1,7 @@
 """Language registry and offline language detection.
 
 Port of LTEngine's languages.rs. Detection runs on the pure-Python whatlang
-port in :mod:`ltengine.core.whatlang` (tables generated from the whatlang
+port in :mod:`ltbridge.core.whatlang` (tables generated from the whatlang
 0.18.0 crate by ``scripts/gen_whatlang_data.py``), which reproduces the Rust
 oracle's output exactly — see ``scripts/sweep_detection_parity.py``.
 """

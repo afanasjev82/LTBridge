@@ -4,7 +4,7 @@ Usage: uv run python scripts/dump_rust_responses.py http://127.0.0.1:PORT MOCK_C
 Start the pair by hand first (see tests/differential/conftest.py), or run via pytest -s
 with a debugger breakpoint; simplest: python -i with the conftest imported.
 
-The exact strings this prints were transcribed into backend/src/ltengine/errors.py and
+The exact strings this prints were transcribed into backend/src/ltbridge/errors.py and
 tests/differential/test_error_parity.py — see .superpowers/sdd/task-6-report.md for the
 full captured table (including the unknown-path/405/malformed-JSON/read-timeout cases
 this script doesn't cover, captured via a throwaway pytest per the task-6 brief).

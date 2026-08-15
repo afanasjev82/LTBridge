@@ -31,8 +31,8 @@ Design (binding requirements from the review that scoped this task):
 2. Four arms per concurrency:
    - `direct-mock`: generator -> mock directly (the floor/ceiling for this harness+host).
    - `rust`: the Rust reference binary (actix-web, no `--workers` flag -> 1 OS thread/core).
-   - `py-w1`: `ltengine` with the shipped default `--workers 1`.
-   - `py-w20`: `ltengine` with `--workers` = `os.cpu_count()` (matching actix's default
+   - `py-w1`: `ltbridge` with the shipped default `--workers 1`.
+   - `py-w20`: `ltbridge` with `--workers` = `os.cpu_count()` (matching actix's default
      thread-per-core parallelism; labeled "py-w20" because that's this host's `nproc`).
    Each server arm dispatches to its OWN dedicated mock subprocess (never shared across
    arms), so one arm's load can never perturb another's upstream.

@@ -1,4 +1,4 @@
-"""ltengine-frontend: static web UI assets for ltengine."""
+"""ltbridge-frontend: static web UI assets for ltbridge."""
 
 from pathlib import Path
 
