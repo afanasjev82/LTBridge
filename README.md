@@ -81,6 +81,21 @@ curl -X POST http://localhost:5050/translate \
 # {"detectedLanguage": {"confidence": 83, "language": "it"}, "translatedText": "Bye!"}
 ```
 
+## Embedding LTBridge in another Litestar app
+
+`ltbridge.server` re-exports its public embedding surface for a host app
+(e.g. the smartech-translate proxy) to mount directly, sharing the host's
+own pooled `httpx.AsyncClient` and reproducing byte-identical error bodies:
+
+```python
+from ltbridge.config import Config
+from ltbridge.server import build_llm_client, create_router, exception_handlers
+
+llm_client = build_llm_client(config, my_pooled_httpx_client)
+app = Litestar(route_handlers=[create_router(config, llm_client)],
+                exception_handlers=exception_handlers())
+```
+
 ## CLI Options
 
 | Flag | Default | Description |

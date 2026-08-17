@@ -1,6 +1,6 @@
 [project]
 name = "ltbridge"
-version = "0.1.0"
+version = "0.1.1"
 description = "LibreTranslate-compatible translation server backed by an external OpenAI-compatible LLM"
 readme = "README.md"
 requires-python = ">=3.12"

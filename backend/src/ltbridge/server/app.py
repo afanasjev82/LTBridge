@@ -21,7 +21,15 @@ from litestar.status_codes import (
     HTTP_404_NOT_FOUND,
     HTTP_405_METHOD_NOT_ALLOWED,
 )
-from litestar.types import LifeSpanReceive, LifeSpanScope, LifeSpanSend, Receive, Scope, Send
+from litestar.types import (
+    ExceptionHandlersMap,
+    LifeSpanReceive,
+    LifeSpanScope,
+    LifeSpanSend,
+    Receive,
+    Scope,
+    Send,
+)
 from ltbridge_frontend import get_static_dir
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
@@ -252,6 +260,45 @@ def _method_not_allowed_handler(
 
 
 # ---------------------------------------------------------------------------
+# Public embedding surface — an embedder (e.g. the smartech-translate proxy)
+# mounts ``create_router(...)`` (re-exported from ``server/routes.py``) into
+# ITS OWN Litestar app. These two functions are the extracted pieces of
+# ``create_app`` an embedder needs: the same exception-handler callables (so
+# error bodies stay byte-identical to a standalone LTBridge server) and the
+# ``LLMClient`` construction logic (so the embedder can share its own pooled
+# ``httpx.AsyncClient`` instead of LTBridge opening a second one). ``create_app``
+# below calls both — single source of truth, proven unchanged by the
+# differential suite.
+# ---------------------------------------------------------------------------
+
+
+def exception_handlers() -> ExceptionHandlersMap:
+    """The exception-handler mapping ``create_app`` registers on its ``Litestar``.
+
+    Returns the SAME callables (not copies/wrappers) so an embedder's app
+    produces byte-identical error bodies to a standalone LTBridge server.
+    """
+    return {
+        LlmError: _llm_error_handler,
+        NotFoundException: _not_found_handler,
+        MethodNotAllowedException: _method_not_allowed_handler,
+    }
+
+
+def build_llm_client(config: Config, http_client: httpx.AsyncClient) -> LLMClient:
+    """Build the ``LLMClient`` ``create_app`` uses, against a caller-supplied
+    ``httpx.AsyncClient`` — extracted so an embedder can share its own pooled
+    client rather than LTBridge opening a second one.
+    """
+    return LLMClient(
+        url=config.llm_url,
+        model=config.llm_model,
+        api_key=config.llm_api_key,
+        http_client=http_client,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Application factory
 # ---------------------------------------------------------------------------
 
@@ -270,12 +317,7 @@ def create_app(config: Config) -> Litestar:
         follow_redirects=True,
         max_redirects=10,
     )
-    llm_client = LLMClient(
-        url=config.llm_url,
-        model=config.llm_model,
-        api_key=config.llm_api_key,
-        http_client=http_client,
-    )
+    llm_client = build_llm_client(config, http_client)
 
     @asynccontextmanager
     async def lifespan(app: Litestar):
@@ -534,11 +576,7 @@ def create_app(config: Config) -> Litestar:
         # re-raising/responding — not reverting this flag (that brings the queue pipeline
         # back).
         logging_config=None,
-        exception_handlers={
-            LlmError: _llm_error_handler,
-            NotFoundException: _not_found_handler,
-            MethodNotAllowedException: _method_not_allowed_handler,
-        },
+        exception_handlers=exception_handlers(),
     )
 
 
