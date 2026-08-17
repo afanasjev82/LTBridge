@@ -458,7 +458,7 @@ wheels = [
 
 [[package]]
 name = "ltbridge"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "backend" }
 dependencies = [
     { name = "granian", extra = ["uvloop"] },

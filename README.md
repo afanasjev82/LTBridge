@@ -89,12 +89,31 @@ own pooled `httpx.AsyncClient` and reproducing byte-identical error bodies:
 
 ```python
 from ltbridge.config import Config
-from ltbridge.server import build_llm_client, create_router, exception_handlers
+from ltbridge.server import boundary, build_llm_client, create_router, exception_handlers
 
 llm_client = build_llm_client(config, my_pooled_httpx_client)
-app = Litestar(route_handlers=[create_router(config, llm_client)],
-                exception_handlers=exception_handlers())
+inner = Litestar(route_handlers=[create_router(config, llm_client), my_own_route],
+                 exception_handlers=exception_handlers())
+
+# The outermost ASGI callable your server imports.
+app = boundary(inner, extra_api_paths=frozenset({"/my/own/route"}))
 ```
+
+`boundary()` is **required for parity**, not optional polish. The router alone
+reproduces the response *bodies*; the semantics of every path the router does
+*not* own live in an outer ASGI layer:
+
+| request | with `boundary()` | router only |
+|---|---|---|
+| `POST /translate/` (trailing slash) | `405`, pinned body | **`200`** — Litestar slash-normalizes onto `/translate` |
+| `GET /` | `200 text/html`, bundled UI | `404` |
+| `GET /nope` | `404 Not found`, no `Content-Type` | `404` JSON-shaped by the host |
+
+Only an **exact** match against `API_PATHS | extra_api_paths` reaches the inner
+app, so every route the host owns must be listed in `extra_api_paths` (exact
+strings — a trailing-slash variant is not implied). Pass `serve_static=False`
+to drop the bundled UI and 404 the whole static surface instead. The wrapper
+records **no metrics** — the host owns its own request accounting.
 
 ## CLI Options
 
@@ -131,6 +150,7 @@ LTBridge/
 │       │   └── errors.py        # LlmError taxonomy
 │       ├── server/            # transport layer
 │       │   ├── app.py           # Litestar application (create_app/app_factory)
+│       │   ├── boundary.py      # Exported request boundary (static/404/405, exact-path gate)
 │       │   ├── banner.py        # Startup ASCII banner + build/runtime/token-budget info
 │       │   ├── routes.py        # Route handlers (create_router)
 │       │   └── streaming.py     # Grace-race + heartbeat streaming
