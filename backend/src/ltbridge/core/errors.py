@@ -157,24 +157,100 @@ def _enclosing_container(text: str, pos: int) -> str:
     return stack[-1] if stack else "{"
 
 
-def json_deserialize_error(raw: bytes, exc: json.JSONDecodeError) -> str:
+#: The four bytes serde_json's ``parse_whitespace`` skips.
+_JSON_WS = b" \t\n\r"
+
+
+def byte_position(raw: bytes, index: int) -> tuple[int, int]:
+    """serde_json's ``Position`` for a 0-indexed BYTE offset into the request body.
+
+    Port of ``SliceRead::position_of_index``: the line is 1-indexed, the column
+    is the number of BYTES consumed since that line began (so column 0 is
+    "nothing consumed on this line yet", not "the first character"). Every
+    serde_json error position in this module funnels through here — see
+    :func:`json_deserialize_error` for how ``index`` itself is derived.
+
+    BYTES, not characters, is the whole point: serde_json indexes the raw
+    request body, so a multi-byte character before the failure advances the
+    column by its encoded length. CPython's ``json`` counts characters, which
+    silently under-reports the column on any non-ASCII body — oracle-verified
+    divergence (``{"q":"привет","source" "en"}`` is column 30 in Rust, 24 by
+    CPython's character count).
+    """
+    prefix = raw[:index]
+    newlines = prefix.count(b"\n")
+    if newlines:
+        return newlines + 1, index - prefix.rindex(b"\n") - 1
+    return 1, index
+
+
+def _byte_offset(text: str, char_offset: int) -> int:
+    """Byte offset of ``char_offset`` in the body ``text`` was decoded from.
+
+    ``surrogateescape`` on both legs is a byte-exact round trip (see
+    :func:`json_deserialize_error`), so this converts CPython's character-based
+    ``JSONDecodeError.pos`` into the byte offset serde_json counts in.
+    """
+    return len(text[:char_offset].encode("utf-8", errors="surrogateescape"))
+
+
+def _skip_ws_bytes(raw: bytes, index: int) -> int:
+    """First non-whitespace BYTE at or after ``index`` (``len(raw)`` if none).
+
+    Distinct from :func:`_skip_ws` further down, which walks a decoded ``str``
+    for :func:`field_spans`; this one indexes the raw body, because serde's
+    positions are byte offsets.
+    """
+    n = len(raw)
+    while index < n and raw[index] in _JSON_WS:
+        index += 1
+    return index
+
+
+def json_deserialize_error(
+    raw: bytes, exc: json.JSONDecodeError, text: str | None = None
+) -> str:
     """Build the ``{"error": ...}`` message for a malformed JSON request body.
 
     Best-effort port of serde_json's ``Display for ErrorImpl`` (``"{code} at
     line {line} column {column}"``), driven off CPython's ``json`` diagnostics.
     See the module-level notes above on the one verified case vs the rest.
 
-    Column at EOF: serde_json's EOF-family errors report ``column = bytes
-    consumed`` (0-indexed byte count) — e.g. an empty body is column 0, a
-    5-byte truncated body is column 5 — whereas CPython's ``colno`` is
-    ``pos + 1`` (1-indexed). Verified against the oracle (Fix wave 2, empty
-    body and ``{"a":``): every EOF-classified branch below must subtract 1
-    from ``exc.colno``; non-EOF branches are unaffected (the verified
-    ``{not json`` case must keep passing byte-for-byte).
+    ``text`` is the string ``exc`` was actually raised against; it defaults to
+    ``raw`` decoded with ``errors="surrogateescape"``. That codec is not
+    cosmetic — it is a byte-EXACT round trip (each undecodable byte becomes one
+    lone surrogate that re-encodes to the same single byte), which is what lets
+    ``exc.pos``, a character offset, be converted back to serde's byte offset
+    for ANY body, valid UTF-8 or not. ``errors="replace"`` (what this used
+    before v0.1.3) collapses a multi-byte invalid sequence into one U+FFFD and
+    silently shifts every offset after it.
+
+    **Position rule.** serde_json reports ``position_of_index(self.index)``,
+    and ``self.index`` sits just PAST what it consumed:
+
+    - EOF-classified codes -> ``index = len(raw)`` ("bytes consumed"). An empty
+      body is column 0, ``{"a":`` is column 5, and an unterminated string runs
+      to the end of the body (oracle: ``{"q":"ab`` is column 8, NOT the opening
+      quote CPython points at).
+    - an escape -> serde has consumed the whole escape sequence: ``\\X`` is two
+      bytes past the backslash, ``\\uXXXX`` six (oracle: ``{"q":"a\\zb"}`` is
+      column 9, ``{"q":"a\\uZZZZb"}`` column 13 — and 13 for a bad digit in ANY
+      of the four positions, so the four are always consumed first).
+    - everything else -> ``index = <offending byte> + 1``. CPython's ``pos`` is
+      that byte for most messages, but the ``Expecting …`` family stops BEFORE
+      skipping whitespace where serde skips it first, so those advance past
+      whitespace to find the byte serde actually complained about (oracle:
+      ``{"q" "x"}`` is column 6, not 5). The control-character branch must NOT
+      skip — there the whitespace IS the offending byte (oracle: a raw newline
+      inside a string reports line 2 column 0).
     """
-    text = raw.decode("utf-8", errors="replace")
+    if text is None:
+        text = raw.decode("utf-8", errors="surrogateescape")
     at_eof = exc.pos >= len(text)
     is_eof_code = False
+    # Bytes serde consumes past `exc.pos` before reporting; 1 == "the offending
+    # byte itself" and is the norm.
+    consumed = 1
 
     if at_eof and exc.msg in _EOF_CODE:
         code = _EOF_CODE[exc.msg]
@@ -189,21 +265,164 @@ def json_deserialize_error(raw: bytes, exc: json.JSONDecodeError) -> str:
     elif exc.msg in _NON_EOF_CODE:
         code = _NON_EOF_CODE[exc.msg]
     elif exc.msg.startswith("Unterminated string starting at"):
-        # NOT adjusted: CPython reports the position of the OPENING quote here,
-        # not end-of-input, so `at_eof`/the bytes-consumed rule don't apply the
-        # same way — this remains unverified best-effort (see module docstring).
+        # CPython points at the OPENING quote; serde scans to end-of-input
+        # looking for the closing one and reports from there — so this is an
+        # EOF-family position despite `exc.pos` being nowhere near the end.
+        # Oracle-verified (`{"q":"ab` -> column 8; `{\n"q":"ab` -> line 2
+        # column 7).
         code = "EOF while parsing a string"
+        is_eof_code = True
     elif exc.msg.startswith("Invalid control character"):
         code = "control character (\\u0000-\\u001F) found while parsing a string"
-    elif exc.msg.startswith("Invalid \\escape") or exc.msg.startswith("Invalid \\uXXXX escape"):
+    elif exc.msg.startswith("Invalid \\uXXXX escape"):
+        # CPython's `pos` is the "u"; serde reads it plus four hex digits.
         code = "invalid escape"
+        consumed = 5
+    elif exc.msg.startswith("Invalid \\escape"):
+        # CPython's `pos` is the backslash; serde reads it plus the escape char.
+        code = "invalid escape"
+        consumed = 2
+    elif exc.msg.startswith("Unexpected UTF-8 BOM"):
+        # CPython special-cases a leading U+FEFF with its own message; serde
+        # has no concept of a BOM and simply meets a byte that starts no value.
+        # Oracle-verified: column 1.
+        code = "expected value"
     else:
         # Unmapped CPython message — not a transcribed Rust string; best-effort
         # passthrough so the response is still a taxonomically-correct 400.
         code = exc.msg
 
-    colno = exc.colno - 1 if is_eof_code else exc.colno
-    return f"Json deserialize error: {code} at line {exc.lineno} column {colno}"
+    if is_eof_code:
+        index = len(raw)
+    else:
+        offending = _byte_offset(text, exc.pos)
+        if exc.msg.startswith("Expecting"):
+            offending = _skip_ws_bytes(raw, offending)
+        index = offending + consumed
+
+    line, column = byte_position(raw, index)
+    return f"Json deserialize error: {code} at line {line} column {column}"
+
+
+# ---------------------------------------------------------------------------
+# Invalid UTF-8 request bodies — serde_json validates UTF-8 LAZILY, only for
+# the contents of a string token, and only once that token's closing quote has
+# been consumed. Everything outside a string is scanned as raw bytes, so a
+# stray ``0xFF`` there is just an unexpected byte and produces an ordinary
+# syntax error instead. CPython's `json` module does the opposite — it decodes
+# the WHOLE body up front — so `json.loads(<invalid utf-8>)` raises
+# `UnicodeDecodeError`, which is NOT a `JSONDecodeError` and, before v0.1.3,
+# escaped `_parse_translate_payload` entirely: Litestar answered
+# `{"status_code":500,"detail":"Internal Server Error"}` where Rust answers a
+# 400. The functions below reproduce serde's laziness.
+# ---------------------------------------------------------------------------
+
+_QUOTE = 0x22
+_BACKSLASH = 0x5C
+
+
+def _first_invalid_utf8(raw: bytes) -> int | None:
+    """Offset of the first byte that is not part of valid UTF-8, else ``None``.
+
+    A deliberate STRICT decode, independent of however the caller failed:
+    ``json.loads(bytes)`` runs ``detect_encoding`` first (so a UTF-16/32 BOM
+    sends it down a completely different decode) and then decodes with
+    ``surrogatepass`` (so CESU-8 surrogate bytes sail through, where Rust
+    rejects them). Neither is serde's rule; this is.
+    """
+    try:
+        raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        return exc.start
+    return None
+
+
+def _closed_string_end(raw: bytes, bad: int) -> int | None:
+    """Index one byte past the closing quote of the string token containing ``bad``.
+
+    ``None`` when serde would not reach a UTF-8 error at all: ``bad`` sits
+    outside any string token, or inside a string that is never closed (serde
+    hits end-of-input first and reports ``EOF while parsing a string``), or is
+    itself the byte an escape introduces (``invalid escape`` wins). In each of
+    those cases the caller falls back to the ordinary syntax path.
+
+    A plain string tokenizer, not a parser: serde only needs the closing quote
+    to decide where to report, and the caller's syntax-error comparison covers
+    the cases where the document is malformed enough for the two views of
+    "which token is this" to disagree.
+    """
+    i = 0
+    n = len(raw)
+    while i < n:
+        if raw[i] != _QUOTE:
+            if i >= bad:
+                return None  # reached `bad` outside any string token
+            i += 1
+            continue
+        j = i + 1
+        while j < n:
+            if raw[j] == _BACKSLASH:
+                if j + 1 == bad:
+                    return None  # `bad` IS the escaped byte -> "invalid escape"
+                j += 2
+                continue
+            if raw[j] == _QUOTE:
+                break
+            j += 1
+        if i < bad < j:
+            return None if j >= n else j + 1
+        if j >= n:
+            return None  # unterminated string, and `bad` is not inside it
+        i = j + 1
+    return None
+
+
+def invalid_utf8_error(raw: bytes) -> str:
+    """Build the ``{"error": ...}`` message for a body that is not valid UTF-8.
+
+    Reproduces serde_json's lazy validation: if the first invalid byte lands
+    inside a CLOSED string token, the error is ``invalid unicode code point``
+    positioned one byte past that token's closing quote (serde validates the
+    slice only after consuming the whole token — oracle-verified, including a
+    ~4.6 KiB Cyrillic body corrupted at byte 100, which reports column 4584,
+    i.e. the end of ``q``, not the corruption site). Otherwise serde meets the
+    byte as an ordinary syntax error, so the message is built by
+    :func:`json_deserialize_error` over a ``surrogateescape`` decode — a
+    byte-exact round trip, so the offsets stay byte-exact and each invalid byte
+    stays one ordinary character rather than collapsing the way
+    ``errors="replace"`` would.
+
+    A syntax error EARLIER in the document wins, because serde would hit it
+    before ever finishing the offending string token: the comparison is
+    against the string's CLOSING quote, since a fault INSIDE the token (a raw
+    control character, say) also pre-empts the UTF-8 check.
+    """
+    bad = _first_invalid_utf8(raw)
+    if bad is None:  # pragma: no cover - callers only reach this on a failed decode
+        bad = len(raw)
+
+    end = _closed_string_end(raw, bad)
+    text = raw.decode("utf-8", errors="surrogateescape")
+    syntax_exc: json.JSONDecodeError | None = None
+    try:
+        json.loads(text)
+    except json.JSONDecodeError as exc:
+        syntax_exc = exc
+
+    if end is not None and (syntax_exc is None or _byte_offset(text, syntax_exc.pos) >= end):
+        line, column = byte_position(raw, end)
+        return f"Json deserialize error: invalid unicode code point at line {line} column {column}"
+
+    if syntax_exc is not None:
+        return json_deserialize_error(raw, syntax_exc, text=text)
+
+    # Unreachable in practice (a body with an invalid byte outside a string
+    # cannot also parse cleanly), but a request must never fall off the end of
+    # this function into a 500 — that is the bug being fixed.
+    line, column = byte_position(raw, bad + 1)  # pragma: no cover
+    return (  # pragma: no cover
+        f"Json deserialize error: invalid unicode code point at line {line} column {column}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -283,19 +502,19 @@ def field_spans(text: str) -> dict[str, tuple[Any, int, int]]:
 
 
 def _line_col(text: str, offset: int) -> tuple[int, int]:
-    """serde_json line/column for a 0-indexed char offset: 1-indexed line;
-    column = characters consumed since the start of that line — the same
-    "bytes/chars consumed" convention already used for the EOF branches in
-    :func:`json_deserialize_error` above, extended here to the non-EOF Data
-    error case. Oracle-verified byte-for-byte: ``{"q":123}`` -> column 8,
-    ``{"q":"x","source":123,"target":"ru"}`` -> column 21, and a garbage
-    ``alternatives`` string value -> column 62.
+    """serde_json line/column for a 0-indexed CHARACTER offset into ``text``.
+
+    Thin adapter over :func:`byte_position`, which is the single implementation
+    of serde_json's position rule: 1-indexed line, column = BYTES consumed
+    since that line began. ``offset`` arrives as a character offset (it comes
+    from :func:`field_spans`, which walks the decoded string), so it is encoded
+    to a byte offset first — the two only coincide on an ASCII body, and the
+    oracle counts bytes. Oracle-verified byte-for-byte: ``{"q":123}`` ->
+    column 8, ``{"q":"x","source":123,"target":"ru"}`` -> column 21, and a
+    garbage ``alternatives`` string value -> column 62.
     """
-    prefix = text[:offset]
-    newlines = prefix.count("\n")
-    if newlines:
-        return newlines + 1, offset - prefix.rindex("\n") - 1
-    return 1, offset
+    data = text.encode("utf-8", errors="surrogateescape")
+    return byte_position(data, _byte_offset(text, offset))
 
 
 def _unexpected_desc(value: Any) -> str:

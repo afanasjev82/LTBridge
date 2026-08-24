@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 import pytest
@@ -273,4 +274,110 @@ def test_api_key_parity(make_pair, case) -> None:
         )
     else:  # settings_still_lies: Rust hardcodes keyRequired/apiKeys false even with a key set
         rust, py = fire_both(pair, "GET", "/frontend/settings")
+    assert_parity(rust, py)
+
+
+# ---------------------------------------------------------------------------
+# Invalid-UTF-8 request bodies (v0.1.3). Before this, `json.loads(<bytes>)`
+# raised `UnicodeDecodeError` — NOT a `json.JSONDecodeError`, so it escaped
+# `_parse_translate_payload` entirely and Litestar answered a bare 500 where
+# Rust answers a 400. Found at the smartech-translate P2 cutover gate.
+#
+# serde_json validates UTF-8 LAZILY: only for the contents of a string token,
+# and only once the closing quote has been consumed — so the column is the END
+# of the offending string, not the corruption site, and a bad byte OUTSIDE a
+# string is an ordinary syntax error instead. Every case below was captured
+# from `.rust-ref/target/release/ltengine` before being written down; the test
+# itself asserts rust == py live, so a stale transcription cannot go green.
+#
+# Bodies are built from `bytes([...])` for the backslash/newline/tab bytes so
+# no quoting layer between here and the wire can reinterpret them.
+# ---------------------------------------------------------------------------
+
+_BS = bytes([0x5C])
+_NL = bytes([0x0A])
+_TAB = bytes([0x09])
+
+
+def _cyrillic_body(corrupt_at: int) -> bytes:
+    """The production repro: a ~4.6 KiB JSON body with a Cyrillic `q`, two of
+    its bytes overwritten with `\xff\xfe`. Rust reports column 4584 — the end
+    of `q`, ~4.5 KiB past the corruption at byte 100."""
+    unit = "Съешь же ещё этих мягких французских булок, да выпей чаю. "
+    q = ""
+    while len(q.encode("utf-8")) < 4500:
+        q += unit
+    raw = bytearray(
+        json.dumps(
+            {"q": q, "source": "ru", "target": "en", "format": "text"}, ensure_ascii=False
+        ).encode("utf-8")
+    )
+    raw[corrupt_at : corrupt_at + 2] = b"\xff\xfe"
+    return bytes(raw)
+
+
+UTF8_CASES: list[tuple[str, bytes]] = [
+    # --- the reported repro, and the same shape in miniature
+    ("repro_5kb_cyrillic_at_100", _cyrillic_body(100)),
+    ("in_string", b'{"q":"a\xffb","source":"en","target":"ru"}'),
+    ("in_string_only_byte", b'{"q":"\xff","source":"en","target":"ru"}'),
+    ("in_string_lone_continuation", b'{"q":"ab\x80cd"}'),
+    ("in_string_long_prefix", b'{"q":"' + b"z" * 200 + b"\xff\xfe" + b"y" * 10 + b'"}'),
+    # the bad byte is in the KEY, not the value
+    ("in_key", b'{"q\xff":"x"}'),
+    # a string whose closing quote is itself escaped-quote-adjacent
+    ("in_string_after_escaped_quote", b'{"q":"a' + _BS + b'"b\xffc"}'),
+    # rejected by Rust, ACCEPTED by CPython's `surrogatepass` decode — the
+    # reason this path validates UTF-8 itself instead of trusting `json.loads`
+    ("cesu8_surrogate", b'{"q":"\xed\xa0\x80"}'),
+    ("overlong_encoding", b'{"q":"\xc0\xaf"}'),
+    # --- structural boundary: NOT a UTF-8 error in Rust, an ordinary syntax one
+    ("structural_after_brace", b'{\xff"q":"x"}'),
+    ("structural_between_fields", b'{"q":"x",\xff"source":"en"}'),
+    ("structural_leading", b'\xff{"q":"x"}'),
+    ("structural_expects_colon", b'{"q"\xff:"x"}'),
+    ("structural_expects_value", b'{"q":\xff}'),
+    ("structural_expects_comma", b'{"q":"x"\xff}'),
+    ("structural_after_whitespace", b'{"q":"x" \xff}'),
+    # --- truncated multi-byte at EOF
+    ("eof_truncated_midchar", b'{"q":"ab\xd0'),
+    ("eof_truncated_string_closed", b'{"q":"ab\xd0"'),
+    ("eof_truncated_multiline", b"{" + _NL + b'"q":"ab\xd0'),
+    # --- multi-line: line is 1-indexed, column counts bytes since the line began
+    ("multiline_in_string", b"{" + _NL + b'  "q": "ab\xffcd",' + _NL + b'  "source": "en"' + _NL + b"}"),
+    ("multiline_structural", b"{" + _NL + b'  "q": "x",' + _NL + b'  \xff"source": "en"' + _NL + b"}"),
+    ("multiline_second_string", b"{" + _NL + b'"a":"bbbb",' + _NL + b'"q":"xy\xffz"' + _NL + b"}"),
+    # --- ordering: whichever fault serde reaches FIRST wins
+    ("syntax_error_before_bad_byte", b'{"q" "x\xffy"}'),
+    ("bad_byte_before_syntax_error", b'{"q":"a\xffb" "x"}'),
+    ("bad_byte_is_the_escape_char", b'{"q":"a' + _BS + b'\xffb"}'),
+    ("control_char_before_bad_byte", b'{"q":"a' + _NL + b'b\xffc"}'),
+    ("control_char_after_bad_byte", b'{"q":"a\xffb' + _TAB + b'c"}'),
+    # --- valid multibyte BEFORE the fault: serde counts BYTES, CPython chars
+    ("cyrillic_then_bad_byte", '{"q":"привет'.encode() + b'\xffx"}'),
+    ("cyrillic_earlier_string_clean", '{"a":"привет","q":"да'.encode() + b'\xff"}'),
+    ("cyrillic_syntax_error", '{"q":"привет","source" "en"}'.encode()),
+    ("cyrillic_typed_mismatch", '{"q":"привет","source":123,"target":"ru"}'.encode()),
+    ("cyrillic_unterminated", '{"q":"привет'.encode()),
+    # --- BOMs: CPython's `detect_encoding`/`utf-8-sig` handling is not serde's
+    ("utf8_bom", b'\xef\xbb\xbf{"q":"x","source":"en","target":"ru"}'),
+    ("utf16_bom", b'\xff\xfe{\x00"\x00q\x00"\x00'),
+    # --- valid-UTF-8 anchors: these must not move
+    ("valid_unterminated_string", b'{"q":"ab'),
+    ("valid_unterminated_multiline", b"{" + _NL + b'"q":"ab'),
+    ("valid_control_char", b'{"q":"a' + _NL + b'b"}'),
+    ("valid_trailing_characters", b'{"a":1} x'),
+]
+
+
+@pytest.mark.parametrize("path", ["/translate", "/detect"])
+@pytest.mark.parametrize("name,body", UTF8_CASES, ids=[c[0] for c in UTF8_CASES])
+def test_invalid_utf8_body_parity(pair, name, body, path) -> None:
+    """Both handlers share `_parse_translate_payload`, so both must answer
+    identically — `/detect` is not a copy of the check, it is the same call."""
+    pair.reset()
+    rust, py = fire_both(
+        pair, "POST", path, content=body, headers={"content-type": "application/json"}
+    )
+    assert rust.status == 400, f"unexpected rust status {rust.status} — re-check case"
     assert_parity(rust, py)

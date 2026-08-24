@@ -92,7 +92,11 @@ async def _parse_translate_payload(request: Request[Any, Any, State]) -> dict[st
       ``request.content_type`` property lowercases via ``parse_content_header``
       (right for Litestar's internal use, wrong for reproducing this gate),
       so the raw value is read straight from ``request.headers`` instead.
-    - For JSON, a syntax failure 400s via :func:`errors.json_deserialize_error`
+    - For JSON, a body that is not valid UTF-8 400s via
+      :func:`errors.invalid_utf8_error` (serde validates UTF-8 lazily, per
+      string token, so the message is usually ``invalid unicode code point``
+      but can be an ordinary syntax error when the bad byte falls outside a
+      string); a syntax failure 400s via :func:`errors.json_deserialize_error`
       (Task 6); a present-but-wrong-typed field (e.g. ``"q":123`` where
       ``q: Option<String>``) 400s via :func:`errors.serde_invalid_type_error` —
       both BEFORE any handler-level (``check_params``) validation runs,
@@ -118,12 +122,25 @@ async def _parse_translate_payload(request: Request[Any, Any, State]) -> dict[st
 
     if raw_content_type.startswith("application/json"):
         raw = await request.body()
+        # STRICT UTF-8 first, then parse the decoded text — deliberately not
+        # `json.loads(raw)`, which decodes the bytes itself with rules serde
+        # does not share: it runs `detect_encoding` (a UTF-16/32 BOM sends the
+        # whole body down a different decode) and then decodes with
+        # `surrogatepass` (CESU-8 surrogate bytes are accepted where Rust
+        # rejects them). Worse, on ordinary invalid UTF-8 it raises
+        # `UnicodeDecodeError`, which is NOT a `json.JSONDecodeError` and so
+        # escaped the handler below entirely — a corrupt body 500'd with
+        # Litestar's default `{"status_code":500,...}` where Rust 400s. See
+        # `errors.invalid_utf8_error`.
         try:
-            parsed = json.loads(raw)
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return _json_400(errors.invalid_utf8_error(raw))
+        try:
+            parsed = json.loads(text)
         except json.JSONDecodeError as exc:
-            return _json_400(errors.json_deserialize_error(raw, exc))
+            return _json_400(errors.json_deserialize_error(raw, exc, text=text))
         if isinstance(parsed, dict):
-            text = raw.decode("utf-8", errors="replace")
             type_error = _check_typed_fields(text, parsed)
             if type_error is not None:
                 return type_error
