@@ -6,9 +6,44 @@ Port of LTEngine's llm_api.rs — calls an external OpenAI-compatible server
 
 from __future__ import annotations
 
+import re
+
 import httpx
 
 from .core import errors
+
+#: Reasoning models (Qwen3, QwQ, DeepSeek-R1) wrap their chain of thought in
+#: ``<think>...</think>``. Only a block that OPENS the reply counts — a literal
+#: tag later in the text is translated content, not reasoning.
+_THINK_OPEN = re.compile(r"\s*<think>")
+_THINK_CLOSE = "</think>"
+
+
+def _strip_reasoning(content: str) -> str:
+    """Drop a leading reasoning block from ``message.content``.
+
+    Not in the Rust reference: it is a safety net for backends that leave
+    thinking inline instead of moving it to ``reasoning_content``/``reasoning``
+    (vLLM without ``--reasoning-parser``, LM Studio with reasoning separation
+    turned off, llama-server with ``--reasoning-format none``). Three shapes:
+
+    - ``<think>…</think>answer`` → ``answer``;
+    - ``…</think>answer`` with no opening tag (the chat template opened
+      ``<think>`` inside the generation prompt) → ``answer``;
+    - ``<think>…`` never closed (cut off mid-thought, e.g. by ``max_tokens``)
+      → :func:`errors.bad_response`: the whole reply is reasoning, and passing
+      it through would hand the client the model's notes as a "translation".
+
+    Content with no reasoning block is returned untouched.
+    """
+    close = content.find(_THINK_CLOSE)
+    if _THINK_OPEN.match(content):
+        if close == -1:
+            raise errors.bad_response("reasoning block not terminated (missing </think>)")
+        return content[close + len(_THINK_CLOSE):].lstrip()
+    if close != -1 and "<think>" not in content[:close]:
+        return content[close + len(_THINK_CLOSE):].lstrip()
+    return content
 
 
 def _is_valid_completion_shape(data: object) -> bool:
@@ -66,11 +101,13 @@ class LLMClient:
         url: str,
         model: str = "",
         api_key: str = "",
+        reasoning_effort: str = "",
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self.url = url.rstrip("/")
         self.model = model
         self.api_key = api_key
+        self.reasoning_effort = reasoning_effort
         # Accept an externally-managed client (e.g. with connection pooling)
         # or create a private one if none is provided.
         self._external_client = http_client is not None
@@ -118,6 +155,11 @@ class LLMClient:
         }
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
+        # Opt-in, so the default payload stays byte-identical to Rust's. vLLM maps
+        # "none" onto enable_thinking=false itself; LM Studio honours only this
+        # field and ignores chat_template_kwargs entirely.
+        if self.reasoning_effort:
+            payload["reasoning_effort"] = self.reasoning_effort
 
         try:
             response = await self._client.post(
@@ -170,4 +212,4 @@ class LLMClient:
         choices = data["choices"]
         if not choices:
             raise errors.empty_choices()
-        return choices[0]["message"]["content"]
+        return _strip_reasoning(choices[0]["message"]["content"])

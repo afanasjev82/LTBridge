@@ -16,9 +16,11 @@ end-to-end so far:
 |---|---|---|
 | vLLM (CUDA) | `gemma-4-12b-it` (AWQ-INT4) | ✅ reference deployment; full differential parity suite |
 | LM Studio (Apple MLX) | `qwen2.5-14b-instruct-mlx` | ✅ `/translate` verified live, zero code changes |
+| LM Studio (Apple MLX) | `qwen/qwen3.8-27b` (4-bit, hybrid reasoning) | ✅ with `--llm-reasoning-effort none`; without it long texts come back untranslated (see note below) |
 
 Notes:
 - **Instruct models only** — the prompt is a system+user pair expecting a plain translated reply; base/completion-only models and reasoning-only endpoints won't return usable text.
+- **Hybrid reasoning models** (Qwen3.x, QwQ, DeepSeek-R1 distills) — every request carries `chat_template_kwargs: {"enable_thinking": false}`, which vLLM/SGLang honour but **LM Studio ignores**. Left on, the model reasons at `temperature 0` (greedy decoding can loop for minutes), the call runs past `--llm-timeout`, and the response falls back to the **untranslated source text** with a `200` (the grace-race fallback, see `server/streaming.py`). Pass `--llm-reasoning-effort none` to switch thinking off there. A leading `<think>…</think>` block that a backend leaves inline in `content` is always stripped; an unterminated one is a `500` rather than reasoning passed off as a translation.
 - **DeepSeek API** — not usable today: the served models (`deepseek-chat`/`deepseek-reasoner`) are not exposed as instruct-style completions in the way LTBridge's prompt expects, and the request carries the vLLM/SGLang `chat_template_kwargs: {"enable_thinking": false}` extension inherited from LTEngine (kept for byte-parity). Servers that reject unknown parameters would need an opt-in compat mode that omits it — not built yet.
 - Add a row above whenever you verify a new backend.
 
@@ -131,6 +133,7 @@ records **no metrics** — the host owns its own request accounting.
 | `--llm-max-tokens-mult` | `0.0` | Dynamic token-budget cap (opt-in): output safety multiple |
 | `--llm-max-tokens-floor` | `64` | Dynamic cap: minimum output tokens for tiny inputs (ceiling still wins over floor) |
 | `--llm-timeout` | `120` | HTTP timeout in seconds for LLM API requests (`0` = no timeout) |
+| `--llm-reasoning-effort` | `` | Send OpenAI's `reasoning_effort` verbatim (`none`, `minimal`, `low`, `medium`, `high`). `none` disables thinking on LM Studio and recent vLLM. Empty = field omitted (Rust byte-parity); servers that reject the field (older vLLM, non-reasoning OpenAI models) keep working |
 | `--workers` | `1` | Granian worker processes. **Warning:** `N>1` currently breaks `/metrics` — each worker is a separate process with its own metrics registry, so scraped counters are not aggregated and are not monotonically increasing. Leave at `1` for any deployment that scrapes `/metrics`; raise it only for a concurrency benchmark |
 | `--verbose`, `-v` | off | Verbose logging |
 

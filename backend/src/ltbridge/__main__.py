@@ -98,6 +98,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="HTTP timeout in seconds for LLM API requests (0 = no timeout) (default: 120)",
     )
     p.add_argument(
+        "--llm-reasoning-effort",
+        default="",
+        metavar="EFFORT",
+        help=(
+            "Send OpenAI's `reasoning_effort` with every request, verbatim (e.g. none, minimal, "
+            "low, medium, high). Use `none` to switch thinking off on reasoning models served by "
+            "backends that ignore `chat_template_kwargs.enable_thinking` (LM Studio). Empty = "
+            "field omitted, byte-identical to the Rust reference (default: empty)"
+        ),
+    )
+    p.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable verbose/debug logging",
@@ -190,6 +201,7 @@ def main() -> None:
         llm_max_tokens_mult=args.llm_max_tokens_mult,
         llm_max_tokens_floor=args.llm_max_tokens_floor,
         llm_timeout=args.llm_timeout,
+        llm_reasoning_effort=args.llm_reasoning_effort,
         verbose=args.verbose,
     )
 
@@ -235,6 +247,7 @@ def main() -> None:
     os.environ["LTBRIDGE_LLM_MAX_TOKENS_MULT"] = str(config.llm_max_tokens_mult)
     os.environ["LTBRIDGE_LLM_MAX_TOKENS_FLOOR"] = str(config.llm_max_tokens_floor)
     os.environ["LTBRIDGE_LLM_TIMEOUT"] = str(config.llm_timeout)
+    os.environ["LTBRIDGE_LLM_REASONING_EFFORT"] = config.llm_reasoning_effort
     os.environ["LTBRIDGE_VERBOSE"] = "1" if config.verbose else "0"
 
     print(f"Listening on http://{config.host}:{config.port}")

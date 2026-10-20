@@ -131,6 +131,8 @@ def _runtime_rows(
         ("bind", f"{config.host}:{config.port}"),
         ("char limit", str(config.char_limit)),
         ("llm timeout", timeout),
+        # Python-specific: --llm-reasoning-effort has no Rust equivalent
+        ("llm reasoning", config.llm_reasoning_effort or "(not sent)"),
         ("workers", str(workers)),  # Python-specific: --workers has no Rust equivalent
     ]
 

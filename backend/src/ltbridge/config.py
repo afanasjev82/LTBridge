@@ -22,6 +22,7 @@ class Config:
     llm_max_tokens_mult: float = 0.0
     llm_max_tokens_floor: int = 64
     llm_timeout: float = 120.0
+    llm_reasoning_effort: str = ""  # empty = `reasoning_effort` omitted from requests
     verbose: bool = False
 
     @classmethod
@@ -48,5 +49,6 @@ class Config:
             llm_max_tokens_mult=float(os.environ.get("LTBRIDGE_LLM_MAX_TOKENS_MULT", "0.0")),
             llm_max_tokens_floor=int(os.environ.get("LTBRIDGE_LLM_MAX_TOKENS_FLOOR", "64")),
             llm_timeout=float(os.environ.get("LTBRIDGE_LLM_TIMEOUT", "120.0")),
+            llm_reasoning_effort=os.environ.get("LTBRIDGE_LLM_REASONING_EFFORT", ""),
             verbose=os.environ.get("LTBRIDGE_VERBOSE", "") == "1",
         )

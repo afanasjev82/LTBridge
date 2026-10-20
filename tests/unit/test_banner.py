@@ -98,6 +98,16 @@ def test_render_banner_llm_timeout_zero_reads_none() -> None:
     assert re.search(r"llm timeout\s+none", text)
 
 
+def test_render_banner_reasoning_effort_row() -> None:
+    text = render_banner(_make_config(llm_reasoning_effort="none"), resolved_model="m", workers=1)
+    assert re.search(r"llm reasoning\s+none", text)
+
+
+def test_render_banner_reasoning_effort_unset_reads_not_sent() -> None:
+    text = render_banner(_make_config(), resolved_model="m", workers=1)
+    assert re.search(r"llm reasoning\s+\(not sent\)", text)
+
+
 def test_render_banner_explicit_model_has_no_resolved_suffix() -> None:
     config = _make_config(llm_model="explicit-model")
     text = render_banner(config, resolved_model=None, workers=1)

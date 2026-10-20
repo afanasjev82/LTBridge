@@ -144,6 +144,7 @@ def build_llm_client(config: Config, http_client: httpx.AsyncClient) -> LLMClien
         url=config.llm_url,
         model=config.llm_model,
         api_key=config.llm_api_key,
+        reasoning_effort=config.llm_reasoning_effort,
         http_client=http_client,
     )
 
