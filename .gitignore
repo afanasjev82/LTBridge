@@ -13,3 +13,17 @@ docs/
 .ruff_cache/
 .pytest_cache/
 .scratch*/
+bench/_real_bench*
+
+# ---- graphify knowledge-graph output ----
+# The brace form that used to live here (`!.../{graph.json,graph.html,...}`) was a NO-OP: git does
+# not expand braces in .gitignore, so cost.json stayed ignored and the three files that ARE tracked
+# only survived because they were added before the rule could bite. One negation per line.
+**/graphify-out/*
+!**/graphify-out/graph.json
+!**/graphify-out/graph.html
+!**/graphify-out/manifest.json
+!**/graphify-out/cost.json
+# GRAPH_REPORT.md needs a SECOND negation after the `*.md` block further down — this one alone is
+# not enough, `*.md` matches later and last match wins. Both are required; keep them in sync.
+!**/graphify-out/GRAPH_REPORT.md

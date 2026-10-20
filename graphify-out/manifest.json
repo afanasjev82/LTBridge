@@ -1,0 +1,347 @@
+{
+  "W:\\Work\\Projects\\smartech\\LTBridge\\backend\\pyproject.toml": {
+    "mtime": 1792467850.83689,
+    "ast_hash": "92d4bd31258c3ce7cbe9160c6ccb1cf2",
+    "semantic_hash": "92d4bd31258c3ce7cbe9160c6ccb1cf2"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\backend\\src\\ltbridge\\__init__.py": {
+    "mtime": 1786765385.5496774,
+    "ast_hash": "b8de0026c1357a53b4d5d954b5c3c091",
+    "semantic_hash": "b8de0026c1357a53b4d5d954b5c3c091"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\backend\\src\\ltbridge\\__main__.py": {
+    "mtime": 1792465345.8553772,
+    "ast_hash": "02780cbcd19dd7d63a31f8fe9e402355",
+    "semantic_hash": "02780cbcd19dd7d63a31f8fe9e402355"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\backend\\src\\ltbridge\\config.py": {
+    "mtime": 1792465336.507171,
+    "ast_hash": "6746ec0cb4fbf7322b46362e27f235c8",
+    "semantic_hash": "6746ec0cb4fbf7322b46362e27f235c8"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\backend\\src\\ltbridge\\core\\__init__.py": {
+    "mtime": 1786765385.5501797,
+    "ast_hash": "28b151a7f16d833398aa1bb473d36454",
+    "semantic_hash": "28b151a7f16d833398aa1bb473d36454"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\backend\\src\\ltbridge\\core\\_whatlang_data.py": {
+    "mtime": 1786765385.5506792,
+    "ast_hash": "83d021caaf2287ed75bf681fc0624aa5",
+    "semantic_hash": "83d021caaf2287ed75bf681fc0624aa5"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\backend\\src\\ltbridge\\core\\errors.py": {
+    "mtime": 1787615111.133271,
+    "ast_hash": "529decf77642934c579645d2b9b8a6ce",
+    "semantic_hash": "529decf77642934c579645d2b9b8a6ce"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\backend\\src\\ltbridge\\core\\formatting.py": {
+    "mtime": 1786765385.5506792,
+    "ast_hash": "eeacb4438647d2028c842672299c7792",
+    "semantic_hash": "eeacb4438647d2028c842672299c7792"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\backend\\src\\ltbridge\\core\\languages.py": {
+    "mtime": 1786765385.5506792,
+    "ast_hash": "c3cb01b7123db288cf70139807aeb319",
+    "semantic_hash": "c3cb01b7123db288cf70139807aeb319"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\backend\\src\\ltbridge\\core\\prompt.py": {
+    "mtime": 1786765385.5511796,
+    "ast_hash": "a69869202151f335a3012d27141a822a",
+    "semantic_hash": "a69869202151f335a3012d27141a822a"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\backend\\src\\ltbridge\\core\\whatlang.py": {
+    "mtime": 1786765385.5511796,
+    "ast_hash": "4c79e661e28be96f7d3459b906986090",
+    "semantic_hash": "4c79e661e28be96f7d3459b906986090"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\backend\\src\\ltbridge\\llm_client.py": {
+    "mtime": 1792465366.026048,
+    "ast_hash": "ffa5cc882f613774c7f13fd236e9d515",
+    "semantic_hash": "ffa5cc882f613774c7f13fd236e9d515"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\backend\\src\\ltbridge\\server\\__init__.py": {
+    "mtime": 1786945335.8232372,
+    "ast_hash": "ac8ea11653ca7b69c07cdf84653f3be6",
+    "semantic_hash": "ac8ea11653ca7b69c07cdf84653f3be6"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\backend\\src\\ltbridge\\server\\app.py": {
+    "mtime": 1792465336.5276792,
+    "ast_hash": "ec7aa30b0c4f63ea6df164005d7cb11e",
+    "semantic_hash": "ec7aa30b0c4f63ea6df164005d7cb11e"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\backend\\src\\ltbridge\\server\\banner.py": {
+    "mtime": 1792465336.548206,
+    "ast_hash": "6dc061302c404e6d91d6c7500dc97a5d",
+    "semantic_hash": "6dc061302c404e6d91d6c7500dc97a5d"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\backend\\src\\ltbridge\\server\\boundary.py": {
+    "mtime": 1786945335.8237367,
+    "ast_hash": "5449a04d632324fc30a86051a9a49746",
+    "semantic_hash": "5449a04d632324fc30a86051a9a49746"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\backend\\src\\ltbridge\\server\\routes.py": {
+    "mtime": 1787615111.133773,
+    "ast_hash": "cef0e8f7d87fe6b1420d905a59379c1b",
+    "semantic_hash": "cef0e8f7d87fe6b1420d905a59379c1b"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\backend\\src\\ltbridge\\server\\streaming.py": {
+    "mtime": 1786765385.5521793,
+    "ast_hash": "d17f674cf5d439c062018305c282152b",
+    "semantic_hash": "d17f674cf5d439c062018305c282152b"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\bench\\__init__.py": {
+    "mtime": 1786657901.6690936,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\bench\\bench_overhead.py": {
+    "mtime": 1786765385.5526795,
+    "ast_hash": "80043dee8b998224e9771d373c62d50b",
+    "semantic_hash": "80043dee8b998224e9771d373c62d50b"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\bench\\real_bench.py": {
+    "mtime": 1786765385.5526795,
+    "ast_hash": "455be01a7fd8adbe456f0b714b8d1ed5",
+    "semantic_hash": "455be01a7fd8adbe456f0b714b8d1ed5"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\bench\\sweep.py": {
+    "mtime": 1786765385.5531793,
+    "ast_hash": "eefa3e2aa135f53783fd12d23db04e87",
+    "semantic_hash": "eefa3e2aa135f53783fd12d23db04e87"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\bench\\texts.py": {
+    "mtime": 1786755284.4246168,
+    "ast_hash": "a560eac3fa7e1319f369d78ea79a03c6",
+    "semantic_hash": "a560eac3fa7e1319f369d78ea79a03c6"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\frontend\\pyproject.toml": {
+    "mtime": 1786765385.5531793,
+    "ast_hash": "8a69aad2d6f0605b27f7176bf00183bb",
+    "semantic_hash": "8a69aad2d6f0605b27f7176bf00183bb"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\frontend\\src\\ltbridge_frontend\\__init__.py": {
+    "mtime": 1786765385.5531793,
+    "ast_hash": "6d9ffc36d3b55e780f1781b3bf66c89d",
+    "semantic_hash": "6d9ffc36d3b55e780f1781b3bf66c89d"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\frontend\\src\\ltbridge_frontend\\static\\app.js": {
+    "mtime": 1786765385.55368,
+    "ast_hash": "0253e0ec9f5027cab28605f13f365ca0",
+    "semantic_hash": "0253e0ec9f5027cab28605f13f365ca0"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\pyproject.toml": {
+    "mtime": 1786765385.55368,
+    "ast_hash": "fb9907938aea7698060468553679cb1d",
+    "semantic_hash": "fb9907938aea7698060468553679cb1d"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\scripts\\build_rust_ref.py": {
+    "mtime": 1786657901.6695929,
+    "ast_hash": "ce8b6994555b4ebcac47908bfff700e6",
+    "semantic_hash": "ce8b6994555b4ebcac47908bfff700e6"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\scripts\\dump_rust_responses.py": {
+    "mtime": 1786765385.5541782,
+    "ast_hash": "ecd0d75fd63e0473c9431098aa05c56b",
+    "semantic_hash": "ecd0d75fd63e0473c9431098aa05c56b"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\scripts\\gen_whatlang_data.py": {
+    "mtime": 1786765385.5541782,
+    "ast_hash": "62ba513e8cdccdde191de020e73a6712",
+    "semantic_hash": "62ba513e8cdccdde191de020e73a6712"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\scripts\\run_suite.py": {
+    "mtime": 1786765385.5546756,
+    "ast_hash": "0a0ecf8a20164a86e09d5cbf295154d3",
+    "semantic_hash": "0a0ecf8a20164a86e09d5cbf295154d3"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\scripts\\sweep_detection_parity.py": {
+    "mtime": 1786765385.5546756,
+    "ast_hash": "ec113eefd91b039bfd55815d2a4d9eb0",
+    "semantic_hash": "ec113eefd91b039bfd55815d2a4d9eb0"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\__init__.py": {
+    "mtime": 1786657901.6705966,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\differential\\__init__.py": {
+    "mtime": 1786657901.6705966,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\differential\\conftest.py": {
+    "mtime": 1786765385.5551758,
+    "ast_hash": "e72d1c4a91dde6de9fdfdccf9d82d503",
+    "semantic_hash": "e72d1c4a91dde6de9fdfdccf9d82d503"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\differential\\helpers.py": {
+    "mtime": 1786657901.6705966,
+    "ast_hash": "f1c223ae3a7f85ae2b154ccaf2b92652",
+    "semantic_hash": "f1c223ae3a7f85ae2b154ccaf2b92652"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\differential\\mock_upstream.py": {
+    "mtime": 1786755284.4251206,
+    "ast_hash": "06ae061854c84acc317f1cf5bcc82901",
+    "semantic_hash": "06ae061854c84acc317f1cf5bcc82901"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\differential\\test_budget_parity.py": {
+    "mtime": 1786657901.6711023,
+    "ast_hash": "247dc2f0c48b05840b6ec474eca8c167",
+    "semantic_hash": "247dc2f0c48b05840b6ec474eca8c167"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\differential\\test_detect_parity.py": {
+    "mtime": 1786657901.6711023,
+    "ast_hash": "6eae2d8a4383331364b9cfea81f1ea4b",
+    "semantic_hash": "6eae2d8a4383331364b9cfea81f1ea4b"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\differential\\test_error_parity.py": {
+    "mtime": 1786657901.6711023,
+    "ast_hash": "26a65864ba1a665fcfecccbdee758479",
+    "semantic_hash": "26a65864ba1a665fcfecccbdee758479"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\differential\\test_method_path_matrix.py": {
+    "mtime": 1786657901.6711023,
+    "ast_hash": "817b4cf0a784b79edafbccaa30b3624e",
+    "semantic_hash": "817b4cf0a784b79edafbccaa30b3624e"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\differential\\test_payload_parity.py": {
+    "mtime": 1786657901.6716015,
+    "ast_hash": "825e210a5e97197ecb059fb65b0e1bd1",
+    "semantic_hash": "825e210a5e97197ecb059fb65b0e1bd1"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\differential\\test_smoke_parity.py": {
+    "mtime": 1786657901.6716015,
+    "ast_hash": "5650045aab27097022796fc536b9e2dc",
+    "semantic_hash": "5650045aab27097022796fc536b9e2dc"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\differential\\test_static_parity.py": {
+    "mtime": 1786657901.6716015,
+    "ast_hash": "7a30f1d84569f09bc43bb59df8bf237d",
+    "semantic_hash": "7a30f1d84569f09bc43bb59df8bf237d"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\differential\\test_streaming_parity.py": {
+    "mtime": 1786657901.6716015,
+    "ast_hash": "3dc99d5675c731a0435e895eb3df7c21",
+    "semantic_hash": "3dc99d5675c731a0435e895eb3df7c21"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\differential\\test_validation_parity.py": {
+    "mtime": 1787615111.133773,
+    "ast_hash": "679563c4cb68ec3c0fb767ab9d2601c1",
+    "semantic_hash": "679563c4cb68ec3c0fb767ab9d2601c1"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\live\\__init__.py": {
+    "mtime": 1786657901.672602,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\live\\test_live_sanity.py": {
+    "mtime": 1786765385.5551758,
+    "ast_hash": "8d316f553a23f0a8e671f084bf013199",
+    "semantic_hash": "8d316f553a23f0a8e671f084bf013199"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\unit\\__init__.py": {
+    "mtime": 1786657901.6731024,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\unit\\test_app.py": {
+    "mtime": 1786765385.5551758,
+    "ast_hash": "637726ce01ba9a24b001adb5cf37b204",
+    "semantic_hash": "637726ce01ba9a24b001adb5cf37b204"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\unit\\test_banner.py": {
+    "mtime": 1792465313.8778286,
+    "ast_hash": "cc1814ce61cb182026d6b16b676a6186",
+    "semantic_hash": "cc1814ce61cb182026d6b16b676a6186"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\unit\\test_boundary.py": {
+    "mtime": 1786945335.8237367,
+    "ast_hash": "2b0b12d966a6d18427a1a5508495ddb6",
+    "semantic_hash": "2b0b12d966a6d18427a1a5508495ddb6"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\unit\\test_core_isolation.py": {
+    "mtime": 1786765385.5556781,
+    "ast_hash": "f7d87fa47db66ad850f22462cb6ab82b",
+    "semantic_hash": "f7d87fa47db66ad850f22462cb6ab82b"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\unit\\test_detection_sweep.py": {
+    "mtime": 1786765385.5556781,
+    "ast_hash": "09e1d9103933c7333780ec2c41eb7a59",
+    "semantic_hash": "09e1d9103933c7333780ec2c41eb7a59"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\unit\\test_embedding_surface.py": {
+    "mtime": 1786941053.393703,
+    "ast_hash": "e1ffab8694c3c351ae74341cfb373c87",
+    "semantic_hash": "e1ffab8694c3c351ae74341cfb373c87"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\unit\\test_errors.py": {
+    "mtime": 1787615111.1342716,
+    "ast_hash": "1331e82a7ef946d4506f22d07ab124f8",
+    "semantic_hash": "1331e82a7ef946d4506f22d07ab124f8"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\unit\\test_llm_client_errors.py": {
+    "mtime": 1786765385.55618,
+    "ast_hash": "e5a8ba969b52b0030a3ca6d5763edfa8",
+    "semantic_hash": "e5a8ba969b52b0030a3ca6d5763edfa8"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\unit\\test_llm_client_reasoning.py": {
+    "mtime": 1792465270.8002963,
+    "ast_hash": "30b3e4e40e0257797b8b594081bd691a",
+    "semantic_hash": "30b3e4e40e0257797b8b594081bd691a"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\unit\\test_metrics_endpoint.py": {
+    "mtime": 1786765385.55618,
+    "ast_hash": "60ab688f8a859d692883836159fd44c0",
+    "semantic_hash": "60ab688f8a859d692883836159fd44c0"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\unit\\test_prompt.py": {
+    "mtime": 1786765385.5566761,
+    "ast_hash": "d6f411da3bb2ccf2c921b6a06bf9d544",
+    "semantic_hash": "d6f411da3bb2ccf2c921b6a06bf9d544"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\unit\\test_response_key_order.py": {
+    "mtime": 1786765385.5566761,
+    "ast_hash": "4dd722bda0d8eeaab02848d7c8688f52",
+    "semantic_hash": "4dd722bda0d8eeaab02848d7c8688f52"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\unit\\test_static_files.py": {
+    "mtime": 1786765385.5566761,
+    "ast_hash": "df1b933bd2769d2b8a1cb2a032919c92",
+    "semantic_hash": "df1b933bd2769d2b8a1cb2a032919c92"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\unit\\test_streaming_cancel.py": {
+    "mtime": 1786765385.5571759,
+    "ast_hash": "e6da0c1ff19996c2db977d6658314463",
+    "semantic_hash": "e6da0c1ff19996c2db977d6658314463"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\unit\\test_token_budget.py": {
+    "mtime": 1786765385.5571759,
+    "ast_hash": "7b52d3bfce45fbfbdb9e5f4944005ddc",
+    "semantic_hash": "7b52d3bfce45fbfbdb9e5f4944005ddc"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\tests\\unit\\test_whatlang_port.py": {
+    "mtime": 1786765385.5571759,
+    "ast_hash": "b71f41f025d5d9f36bfcb2b9978cb139",
+    "semantic_hash": "b71f41f025d5d9f36bfcb2b9978cb139"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\README.md": {
+    "mtime": 1792465532.0695782,
+    "ast_hash": "48cfc1ce6bf211b427d7369c0743d2f5",
+    "semantic_hash": "48cfc1ce6bf211b427d7369c0743d2f5"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\backend\\README.md": {
+    "mtime": 1786765385.5491774,
+    "ast_hash": "abb6abb6d245f4120523351b86101c1f",
+    "semantic_hash": "abb6abb6d245f4120523351b86101c1f"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\bench\\REPORT.md": {
+    "mtime": 1786765385.5526795,
+    "ast_hash": "9d8d89768f5dd072b12e8cb781287af8",
+    "semantic_hash": "9d8d89768f5dd072b12e8cb781287af8"
+  },
+  "W:\\Work\\Projects\\smartech\\LTBridge\\frontend\\src\\ltbridge_frontend\\static\\index.html": {
+    "mtime": 1786765385.55368,
+    "ast_hash": "594f776b92e3b9449412b4c954a41b7e",
+    "semantic_hash": "594f776b92e3b9449412b4c954a41b7e"
+  }
+}
