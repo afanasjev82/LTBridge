@@ -39,6 +39,25 @@ def _translate_bodies() -> list[tuple[str, dict[str, Any]]]:
             "alternatives_with_detection",
             _translate_response_body("hi", "hi", alternatives=3, detected=_DETECTED),
         ),
+        # v0.1.5 opt-in slow-failure marker (`--mark-fallback`)
+        (
+            "fallback_only",
+            _translate_response_body(
+                "hi", "hi", alternatives=0, detected=None, fallback="llm_error"
+            ),
+        ),
+        (
+            "fallback_with_detection",
+            _translate_response_body(
+                "hi", "hi", alternatives=0, detected=_DETECTED, fallback="llm_timeout"
+            ),
+        ),
+        (
+            "fallback_with_alternatives_and_detection",
+            _translate_response_body(
+                "hi", "hi", alternatives=2, detected=_DETECTED, fallback="llm_timeout"
+            ),
+        ),
     ]
 
 
@@ -72,6 +91,28 @@ def test_translate_response_body_has_exactly_the_expected_keys() -> None:
     assert set(
         _translate_response_body("hi", "hi", alternatives=1, detected=_DETECTED).keys()
     ) == {"alternatives", "detectedLanguage", "translatedText"}
+    assert set(
+        _translate_response_body("hi", "hi", alternatives=0, detected=None, fallback=None).keys()
+    ) == {"translatedText"}
+    assert set(
+        _translate_response_body(
+            "hi", "hi", alternatives=1, detected=_DETECTED, fallback="llm_timeout"
+        ).keys()
+    ) == {"alternatives", "detectedLanguage", "fallback", "translatedText"}
+
+
+def test_translate_response_body_fallback_sits_between_detected_language_and_text() -> None:
+    """The opt-in marker (v0.1.5) keeps the BTreeMap order a serde body would have.
+
+    MUTATION: insert ``fallback`` after ``translatedText`` -> observed red (4
+    failed: this test and the three ``fallback_*`` ids of the alphabetical
+    test above).
+    """
+    body = _translate_response_body(
+        "hi", "hi", alternatives=1, detected=_DETECTED, fallback="llm_timeout"
+    )
+    assert list(body) == ["alternatives", "detectedLanguage", "fallback", "translatedText"]
+    assert body["fallback"] == "llm_timeout"
 
 
 def test_detection_json_keys_are_alphabetical() -> None:

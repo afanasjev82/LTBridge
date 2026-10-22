@@ -112,12 +112,28 @@ def _launch_rust(mock_url: str, extra_flags: list[str]) -> ServerHandle:
 # the pytest process already IS that venv's interpreter, so plain `sys.executable -m ltbridge`
 # needs no `uv run` re-wrapping and stays fast to start. Verified directly:
 #   .venv/Scripts/python.exe -m ltbridge --help   (from repo root AND from backend/) -> works.
+def _py_env() -> dict[str, str]:
+    """The Python server's environment, minus every ``LTBRIDGE_*`` variable.
+
+    The parity pair must run on the flags this suite passes and nothing else.
+    Since v0.1.5 ``--mark-fallback`` also defaults from ``LTBRIDGE_MARK_FALLBACK``
+    (the one CLI flag that reads its variable), so a stray ``=1`` in the shell
+    that launched pytest would tag the slow-failure fallback body and redden
+    the streaming parity tests for a reason unrelated to the code under test.
+    Observed: with ``LTBRIDGE_MARK_FALLBACK=1`` exported, test_streaming_parity
+    passes 7/7 with this scrub and fails its two slow-failure tests without it
+    (the same two that go red when the flag is defaulted on).
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("LTBRIDGE_")}
+
+
 def _launch_py(mock_url: str, extra_flags: list[str]) -> ServerHandle:
     port = free_port()
     proc = subprocess.Popen(
         [sys.executable, "-m", "ltbridge", "--llm-url", mock_url, "--host", "127.0.0.1",
          "--port", str(port), *extra_flags],
         cwd=str(REPO_ROOT / "backend"),
+        env=_py_env(),
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     base = f"http://127.0.0.1:{port}"
     _wait_http(f"{base}/languages")

@@ -30,6 +30,7 @@ from ..core.languages import LANGUAGES, DetectionResult, detect_language, get_la
 from ..core.prompt import PromptBuilder
 from ..core.token_budget import output_cap
 from ..llm_client import LLMClient
+from .streaming import logger as _fallback_logger
 from .streaming import respond_with_grace
 
 # ---------------------------------------------------------------------------
@@ -336,7 +337,12 @@ def _detection_json(result: DetectionResult) -> dict[str, Any]:
 
 
 def _translate_response_body(
-    q: str, translated_text: str, *, alternatives: int, detected: DetectionResult | None
+    q: str,
+    translated_text: str,
+    *,
+    alternatives: int,
+    detected: DetectionResult | None,
+    fallback: str | None = None,
 ) -> dict[str, Any]:
     """Port of main.rs's ``translate_response_json``. Single source of truth
     for EVERY ``/translate`` 200 body — identity, fast success, and the
@@ -351,8 +357,13 @@ def _translate_response_body(
     Key order (both here and the nested ``detectedLanguage`` object) matches
     Rust's ``serde_json::json!({...})`` — a dynamically-built ``Value::Object``
     serializes via serde_json's default BTreeMap (alphabetical), not
-    insertion order: alternatives < detectedLanguage < translatedText. Insert
-    in that fixed order regardless of which optional keys end up present.
+    insertion order: alternatives < detectedLanguage < fallback <
+    translatedText. Insert in that fixed order regardless of which optional
+    keys end up present.
+
+    ``fallback`` is Python-only (v0.1.5, ``--mark-fallback``): the reason a
+    slow-failure fallback is echoing the original text (``"llm_timeout"`` or
+    ``"llm_error"``). ``None`` omits the key, which is every body Rust builds.
     """
     body: dict[str, Any] = {}
 
@@ -361,6 +372,9 @@ def _translate_response_body(
 
     if detected is not None:
         body["detectedLanguage"] = _detection_json(detected)
+
+    if fallback is not None:
+        body["fallback"] = fallback
 
     body["translatedText"] = improve_formatting(q, translated_text)
     return body
@@ -504,9 +518,9 @@ def create_router(config: Config, llm_client: LLMClient) -> Router:
         # byte-identical rearrangement of Rust's per-call `detect_lang`.
         detected = detect_language(q) if source == "auto" else None
 
-        def _result_body(translated_text: str) -> dict[str, Any]:
+        def _result_body(translated_text: str, *, fallback: str | None = None) -> dict[str, Any]:
             return _translate_response_body(
-                q, translated_text, alternatives=alternatives, detected=detected
+                q, translated_text, alternatives=alternatives, detected=detected, fallback=fallback
             )
 
         # Identity path: no LLM call, so no grace machinery — Rust returns here
@@ -538,7 +552,30 @@ def create_router(config: Config, llm_client: LLMClient) -> Router:
         # failure that arrives AFTER the 200 has been committed to the wire
         # degrades to the original text — Rust's wart, reproduced deliberately.
         # See streaming.py.
-        return await respond_with_grace(work(), fallback_body=_result_body(q))
+        def _on_fallback(exc: Exception, elapsed_s: float) -> dict[str, Any]:
+            # Rust serves this echo silently; the committed 200 leaves nothing
+            # else to see it by, so it is ALWAYS logged (flag on or off). Never
+            # `q` and never the exception's message (an upstream error body can
+            # quote the request): its length, the codes and the classes only.
+            # `error` names the httpx cause LLMClient chains (`... from exc`).
+            reason = errors.fallback_reason(exc)
+            cause = exc.__cause__ if exc.__cause__ is not None else exc
+            _fallback_logger.warning(
+                "translate fallback served (reason=%s error=%s elapsed_s=%.1f chars=%d "
+                "src=%s tgt=%s)",
+                reason,
+                type(cause).__name__,
+                elapsed_s,
+                len(q),
+                source,
+                target,
+            )
+            # Opt-in marker (Python-only); off = the body Rust builds, byte for byte.
+            return _result_body(q, fallback=reason if config.mark_fallback else None)
+
+        return await respond_with_grace(
+            work(), fallback_body=_result_body(q), on_fallback=_on_fallback
+        )
 
     @post("/translate_file", name="translate_file")
     async def translate_file() -> Response:

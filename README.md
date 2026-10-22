@@ -134,6 +134,7 @@ records **no metrics** — the host owns its own request accounting.
 | `--llm-max-tokens-floor` | `64` | Dynamic cap: minimum output tokens for tiny inputs (ceiling still wins over floor) |
 | `--llm-timeout` | `120` | HTTP timeout in seconds for LLM API requests (`0` = no timeout) |
 | `--llm-reasoning-effort` | `` | Send OpenAI's `reasoning_effort` verbatim (`none`, `minimal`, `low`, `medium`, `high`). `none` disables thinking on LM Studio and recent vLLM. Empty = field omitted (Rust byte-parity); servers that reject the field (older vLLM, non-reasoning OpenAI models) keep working |
+| `--mark-fallback` | off | When the LLM call fails after the 1 s grace period (the chunked `200` is already sent, so the body echoes the original text), add `"fallback": "llm_timeout"` or `"llm_error"` to that body. Off = byte-identical to the Rust reference. Also on with `LTBRIDGE_MARK_FALLBACK=1`; an embedder sets `Config(mark_fallback=True)`. Every such fallback logs one `WARNING` on `ltbridge.server.streaming` either way (reason, error class, elapsed seconds, character count, language codes; never the text) |
 | `--workers` | `1` | Granian worker processes. **Warning:** `N>1` currently breaks `/metrics` — each worker is a separate process with its own metrics registry, so scraped counters are not aggregated and are not monotonically increasing. Leave at `1` for any deployment that scrapes `/metrics`; raise it only for a concurrency benchmark |
 | `--verbose`, `-v` | off | Verbose logging |
 
