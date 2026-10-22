@@ -100,6 +100,33 @@ def map_llm_failure(exc_or_status: Exception | tuple[int, str]) -> LlmError:
 
 
 # ---------------------------------------------------------------------------
+# Slow-failure fallback marker — Python-only, NOT in the Rust reference (v0.1.5)
+# ---------------------------------------------------------------------------
+
+#: The LLM call ran out of time (httpx read/connect/pool timeout).
+FALLBACK_LLM_TIMEOUT = "llm_timeout"
+#: Any other failure: a non-2xx upstream status, an unreachable server, an
+#: unparseable body, an empty ``choices`` list, or anything unexpected.
+FALLBACK_LLM_ERROR = "llm_error"
+
+
+def fallback_reason(exc: BaseException) -> str:
+    """Classify a slow failure for the opt-in ``"fallback"`` body marker and its log line.
+
+    A failure that lands after the grace period cannot change the committed
+    ``200`` (``server/streaming.py``), so the reason is all a client gets.
+    ``LLMClient.translate`` wraps a transport failure as ``raise
+    errors.timeout() from exc``, which leaves the httpx exception on
+    ``__cause__``; a bare ``httpx.TimeoutException`` (``exc`` itself) counts
+    too. Everything else is :data:`FALLBACK_LLM_ERROR`.
+    """
+    cause = exc.__cause__
+    if isinstance(exc, httpx.TimeoutException) or isinstance(cause, httpx.TimeoutException):
+        return FALLBACK_LLM_TIMEOUT
+    return FALLBACK_LLM_ERROR
+
+
+# ---------------------------------------------------------------------------
 # Request-body JSON syntax errors — port of serde_json's Display + actix's
 # ``web::Json`` extractor -> ``ErrorResponse::from(actix_web::Error)`` mapping
 # (error_response.rs). Rust: ``{"error": "Json deserialize error: <code> at

@@ -109,6 +109,22 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument(
+        "--mark-fallback",
+        action="store_true",
+        # The one flag that also reads its LTBRIDGE_* variable here: main() writes
+        # every LTBRIDGE_* back from the parsed args before Granian starts, so
+        # without this default `LTBRIDGE_MARK_FALLBACK=1 ltbridge ...` would be
+        # silently overwritten with 0.
+        default=os.environ.get("LTBRIDGE_MARK_FALLBACK", "") == "1",
+        help=(
+            'When the LLM call fails after the 1 s grace period (the 200 is already sent), '
+            'add "fallback": "llm_timeout" | "llm_error" to the body that echoes the original '
+            "text. Off = byte-identical to the Rust reference. Also on with "
+            "LTBRIDGE_MARK_FALLBACK=1. Every such fallback is logged at WARNING either way "
+            "(default: off)"
+        ),
+    )
+    p.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable verbose/debug logging",
@@ -203,6 +219,7 @@ def main() -> None:
         llm_timeout=args.llm_timeout,
         llm_reasoning_effort=args.llm_reasoning_effort,
         verbose=args.verbose,
+        mark_fallback=args.mark_fallback,
     )
 
     # Fail fast, before Granian spawns anything — matches the Rust reference's
@@ -249,6 +266,7 @@ def main() -> None:
     os.environ["LTBRIDGE_LLM_TIMEOUT"] = str(config.llm_timeout)
     os.environ["LTBRIDGE_LLM_REASONING_EFFORT"] = config.llm_reasoning_effort
     os.environ["LTBRIDGE_VERBOSE"] = "1" if config.verbose else "0"
+    os.environ["LTBRIDGE_MARK_FALLBACK"] = "1" if config.mark_fallback else "0"
 
     print(f"Listening on http://{config.host}:{config.port}")
 

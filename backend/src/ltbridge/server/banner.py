@@ -133,6 +133,8 @@ def _runtime_rows(
         ("llm timeout", timeout),
         # Python-specific: --llm-reasoning-effort has no Rust equivalent
         ("llm reasoning", config.llm_reasoning_effort or "(not sent)"),
+        # Python-specific: --mark-fallback has no Rust equivalent
+        ("mark fallback", "on" if config.mark_fallback else "off"),
         ("workers", str(workers)),  # Python-specific: --workers has no Rust equivalent
     ]
 

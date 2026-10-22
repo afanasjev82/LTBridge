@@ -24,6 +24,10 @@ class Config:
     llm_timeout: float = 120.0
     llm_reasoning_effort: str = ""  # empty = `reasoning_effort` omitted from requests
     verbose: bool = False
+    # Opt-in (v0.1.5, Python-only): a slow-failure fallback body also carries
+    # `"fallback": "llm_timeout" | "llm_error"`. Off = Rust's bytes. Last field,
+    # so a positional Config(...) built by an embedder keeps its meaning.
+    mark_fallback: bool = False
 
     @classmethod
     def from_env(cls) -> Config:
@@ -51,4 +55,5 @@ class Config:
             llm_timeout=float(os.environ.get("LTBRIDGE_LLM_TIMEOUT", "120.0")),
             llm_reasoning_effort=os.environ.get("LTBRIDGE_LLM_REASONING_EFFORT", ""),
             verbose=os.environ.get("LTBRIDGE_VERBOSE", "") == "1",
+            mark_fallback=os.environ.get("LTBRIDGE_MARK_FALLBACK", "") == "1",
         )

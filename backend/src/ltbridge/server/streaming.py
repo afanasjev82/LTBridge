@@ -23,17 +23,28 @@ Dropping the stream (client disconnect) drops the future in Rust, which closes
 the reqwest connection so vLLM can abort and free its KV slot. The Python
 equivalent is cancelling the :class:`asyncio.Task`, which is what the
 generator's ``finally`` does.
+
+v0.1.5 (Python-only): :func:`respond_with_grace` takes an ``on_fallback`` hook,
+which the ``/translate`` route uses to log every slow-failure fallback and,
+behind the opt-in ``--mark-fallback``, to tag the body with a ``"fallback"``
+reason. Without the hook, or with the flag off, the bytes are Rust's.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, Coroutine
+import logging
+import time
+from collections.abc import AsyncGenerator, Callable, Coroutine
 from typing import Any
 
 from litestar.response import Response, Stream
 from litestar.serialization import default_serializer, encode_json
 from litestar.status_codes import HTTP_200_OK
+
+#: ``ltbridge.server.streaming`` — the route's fallback WARNING is logged here
+#: too, so one logger name covers every slow-failure event.
+logger = logging.getLogger(__name__)
 
 #: main.rs: ``const GRACE_PERIOD: Duration = Duration::from_secs(1)``.
 GRACE_PERIOD_S = 1.0
@@ -45,6 +56,10 @@ _HEARTBEAT = b" "
 
 #: A fully-assembled ``/translate`` response body (Rust's ``translate_response_json``).
 ResultBody = dict[str, Any]
+
+#: ``on_fallback(exc, elapsed_s) -> body``: builds the body served when a slow
+#: ``work`` fails; ``elapsed_s`` is measured from when ``work`` was started.
+FallbackHook = Callable[[Exception, float], ResultBody]
 
 
 def _encode(body: ResultBody) -> bytes:
@@ -61,9 +76,35 @@ def _encode(body: ResultBody) -> bytes:
     return encode_json(body, default_serializer)
 
 
+def _fallback_chunk(
+    exc: Exception,
+    fallback_body: ResultBody,
+    on_fallback: FallbackHook | None,
+    elapsed_s: float,
+) -> bytes:
+    """The final chunk for a slow failure: the hook's body, else ``fallback_body``.
+
+    The ``200`` is already on the wire, so a hook that raises (or returns
+    something unserializable) cannot be reported to the client either; it
+    degrades to the plain ``fallback_body`` and is logged by exception CLASS
+    only (a message can carry the request text).
+    """
+    if on_fallback is not None:
+        try:
+            return _encode(on_fallback(exc, elapsed_s))
+        except Exception as hook_exc:  # noqa: BLE001 — the stream is committed; serve something
+            logger.error(
+                "fallback hook raised (error=%s); serving the unmarked fallback body",
+                type(hook_exc).__name__,
+            )
+    return _encode(fallback_body)
+
+
 async def _heartbeat_stream(
     task: asyncio.Task[ResultBody],
     fallback_body: ResultBody,
+    on_fallback: FallbackHook | None,
+    started: float,
 ) -> AsyncGenerator[bytes, None]:
     """Yield one space per heartbeat interval, then the final JSON body.
 
@@ -80,14 +121,16 @@ async def _heartbeat_stream(
 
         try:
             body = task.result()
-        except Exception:  # noqa: BLE001 — Rust's `unwrap_or_else(|_| ...)` is equally blind
+        except Exception as exc:  # noqa: BLE001 — Rust's `unwrap_or_else(|_| ...)` is equally blind
             # THE WART (main.rs: `res.unwrap_or_else(|_| q.clone())`). The 200
             # is already committed, so a slow failure degrades to the untranslated
             # original text instead of an error status. `asyncio.CancelledError`
             # is a BaseException and deliberately NOT caught: a cancelled task
             # means we are being torn down, not that the LLM failed.
-            body = fallback_body
-        yield _encode(body)
+            chunk = _fallback_chunk(exc, fallback_body, on_fallback, time.monotonic() - started)
+        else:
+            chunk = _encode(body)
+        yield chunk
     finally:
         # Client disconnected mid-stream (Litestar cancels the streaming task
         # group, which throws into this generator at its current await point,
@@ -100,6 +143,8 @@ async def _heartbeat_stream(
 async def respond_with_grace(
     work: Coroutine[Any, Any, ResultBody],
     fallback_body: ResultBody,
+    *,
+    on_fallback: FallbackHook | None = None,
 ) -> Response[Any] | Stream:
     """Race ``work`` against the grace period; buffer if fast, stream if slow.
 
@@ -111,6 +156,11 @@ async def respond_with_grace(
         fallback_body: The body to emit if a slow ``work`` fails — Rust builds
             it with the same ``translate_response_json`` the success path uses,
             passing the ORIGINAL text as the translation.
+        on_fallback: Optional ``(exc, elapsed_s) -> body`` hook, called only
+            when a slow ``work`` fails; its body is served instead of
+            ``fallback_body``. If the hook raises, ``fallback_body`` is served
+            (the ``200`` is already committed, nothing else is possible). Never
+            called on the fast path, where the exception still propagates.
 
     Returns:
         A buffered :class:`~litestar.response.Response` (fast) or a chunked
@@ -118,6 +168,7 @@ async def respond_with_grace(
         explicit status matters because Litestar would otherwise default a
         ``POST`` handler's response to 201.
     """
+    started = time.monotonic()
     task: asyncio.Task[ResultBody] = asyncio.create_task(work)
     # consume terminal state; never log "Task exception was never retrieved"
     task.add_done_callback(lambda t: t.cancelled() or t.exception())
@@ -141,7 +192,7 @@ async def respond_with_grace(
         )
 
     return Stream(
-        _heartbeat_stream(task, fallback_body),
+        _heartbeat_stream(task, fallback_body, on_fallback, started),
         status_code=HTTP_200_OK,
         media_type=_JSON_MEDIA_TYPE,
     )
