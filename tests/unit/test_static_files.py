@@ -46,6 +46,19 @@ def test_style_css_served_with_correct_content_type_and_bytes() -> None:
         assert r.content == expected
 
 
+def test_favicon_ico_served_with_icon_content_type_and_bytes() -> None:
+    static_dir = get_static_dir()
+    expected = (static_dir / "favicon.ico").read_bytes()
+    with _client() as client:
+        r = client.get("/favicon.ico")
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("image/x-icon")
+        assert r.content == expected
+        # index.html must point browsers at it explicitly (not rely on the
+        # implicit /favicon.ico probe alone).
+        assert b'rel="icon" href="/favicon.ico"' in client.get("/").content
+
+
 def test_unknown_static_path_gets_rust_parity_404() -> None:
     with _client() as client:
         r = client.get("/nope.js")
