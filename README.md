@@ -165,7 +165,8 @@ LTBridge/
 │   └── src/ltbridge_frontend/static/
 │       ├── index.html
 │       ├── app.js
-│       └── style.css
+│       ├── style.css
+│       └── favicon.ico
 ├── tests/
 │   ├── unit/                   # Fast, no external process
 │   ├── differential/            # Launches Rust oracle + Python server side by side

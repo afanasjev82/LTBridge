@@ -8,26 +8,39 @@
   --border: #d0d5dd;
   --primary: #2563eb;
   --primary-hover: #1d4ed8;
+  --primary-tint: #eff6ff;
   --text: #1a202c;
   --muted: #6b7280;
+  --error: #dc2626;
+  --success: #16a34a;
   --radius: 8px;
   font-size: 15px;
 }
 
 body {
   margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
   background: var(--bg);
   color: var(--text);
   font-family: system-ui, -apple-system, sans-serif;
 }
 
+/* Page column: fills the viewport height; the text panels take whatever is
+   left after the header, language row and action row. */
 .container {
-  max-width: 900px;
-  margin: 2rem auto;
-  padding: 0 1rem;
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem;
 }
 
-header { text-align: center; margin-bottom: 1.5rem; }
+header { text-align: center; margin-bottom: 1.25rem; }
 header h1 { margin: 0; font-size: 1.8rem; color: var(--primary); }
 .subtitle { margin: 0.25rem 0 0; color: var(--muted); font-size: 0.9rem; }
 
@@ -73,10 +86,11 @@ select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,23
   margin-bottom: 0;
 }
 
-#swap-btn:hover { color: var(--primary); background: #eff6ff; }
+#swap-btn:hover { color: var(--primary); background: var(--primary-tint); }
 
 /* Text areas */
 .translate-area {
+  flex: 1 0 auto;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1rem;
@@ -89,6 +103,7 @@ select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,23
 }
 
 .text-panel {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
@@ -97,9 +112,19 @@ select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,23
   flex-direction: column;
 }
 
+/* Ring the panel only while its text box has focus — not when a footer
+   button inside it was just clicked. */
+.text-panel:has(textarea:focus) { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,.15); }
+
+/* `flex-basis: auto` (not the `0%` that `flex: 1` implies) is what makes the
+   resize handle work: dragging sets an inline `height`, which an auto basis
+   honours. `flex-grow` still stretches the box to fill the panel, so a drag
+   can make it taller than the fill height (the page then scrolls), never
+   shorter. */
 textarea {
-  flex: 1;
+  flex: 1 1 auto;
   width: 100%;
+  min-height: 10rem;
   padding: 0.75rem 1rem;
   border: none;
   resize: vertical;
@@ -111,21 +136,99 @@ textarea {
   line-height: 1.5;
 }
 
+/* Room for the clear button so text never runs underneath it. */
+#source-text { padding-right: 3rem; }
+
 .output-panel textarea { color: #374151; background: #f9fafb; }
 
+.clear-btn {
+  position: absolute;
+  top: 0.45rem;
+  right: 1.1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color .15s, background .15s;
+}
+
+.clear-btn:hover { color: var(--text); background: #eef0f3; }
+.clear-btn[hidden] { display: none; }
+
+.clear-btn svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
 .panel-footer {
-  padding: 0.3rem 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.2rem 0.4rem 0.2rem 0.75rem;
   font-size: 0.78rem;
   color: var(--muted);
   border-top: 1px solid var(--border);
-  min-height: 1.6rem;
+  min-height: 2rem;
 }
+
+.footer-info { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.footer-actions { display: inline-flex; gap: 0.15rem; flex-shrink: 0; }
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.5rem;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: color .15s, background .15s;
+}
+
+.icon-btn:hover:not(:disabled) { color: var(--primary); background: var(--primary-tint); }
+.icon-btn:disabled { opacity: .45; cursor: default; }
+.icon-btn[hidden] { display: none; }
+.icon-btn.done, .icon-btn.done:hover { color: var(--success); background: transparent; }
+.icon-btn.failed, .icon-btn.failed:hover { color: var(--error); background: transparent; }
+
+.icon-btn svg {
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.clear-btn:focus-visible,
+.icon-btn:focus-visible,
+#swap-btn:focus-visible,
+.primary-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 
 /* Actions */
 .action-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 1rem;
+  gap: 0.5rem 1rem;
 }
 
 .primary-btn {
@@ -144,4 +247,12 @@ textarea {
 .primary-btn:disabled { opacity: .6; cursor: not-allowed; }
 
 #status-msg { font-size: 0.9rem; color: var(--muted); }
-#status-msg.error { color: #dc2626; }
+#status-msg.error { color: var(--error); }
+
+/* Muted per-translation stats (elapsed time, sizes, speed). */
+.stats {
+  margin-left: auto;
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}

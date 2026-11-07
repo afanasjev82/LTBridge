@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LTBridge — Translation</title>
+  <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
@@ -30,14 +31,33 @@
     <div class="translate-area">
       <div class="text-panel">
         <textarea id="source-text" placeholder="Enter text to translate…" rows="8" autocomplete="off" spellcheck="true"></textarea>
+        <button id="clear-btn" class="clear-btn" type="button" title="Clear text" aria-label="Clear text" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
         <div class="panel-footer">
-          <span id="char-count">0</span> / <span id="char-limit">—</span>
+          <span class="footer-info"><span id="char-count">0</span> / <span id="char-limit">—</span></span>
+          <span class="footer-actions">
+            <button id="paste-btn" class="icon-btn" type="button" title="Paste from clipboard" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6v3H9z" /><path d="M9 5.5H6.5A1.5 1.5 0 0 0 5 7v12.5A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V7a1.5 1.5 0 0 0-1.5-1.5H15" /></svg>
+              <span class="btn-label">Paste</span>
+            </button>
+            <button id="copy-source-btn" class="icon-btn" type="button" title="Copy source text">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11.5" height="12" rx="1.5" /><path d="M15.5 5.5V4.5A1.5 1.5 0 0 0 14 3H5.5A1.5 1.5 0 0 0 4 4.5V15a1.5 1.5 0 0 0 1.5 1.5h1" /></svg>
+              <span class="btn-label">Copy</span>
+            </button>
+          </span>
         </div>
       </div>
       <div class="text-panel output-panel">
         <textarea id="target-text" placeholder="Translation will appear here…" rows="8" readonly></textarea>
         <div class="panel-footer">
-          <span id="detected-lang"></span>
+          <span id="detected-lang" class="footer-info"></span>
+          <span class="footer-actions">
+            <button id="copy-target-btn" class="icon-btn" type="button" title="Copy translation">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11.5" height="12" rx="1.5" /><path d="M15.5 5.5V4.5A1.5 1.5 0 0 0 14 3H5.5A1.5 1.5 0 0 0 4 4.5V15a1.5 1.5 0 0 0 1.5 1.5h1" /></svg>
+              <span class="btn-label">Copy</span>
+            </button>
+          </span>
         </div>
       </div>
     </div>
@@ -45,6 +65,7 @@
     <div class="action-row">
       <button id="translate-btn" class="primary-btn">Translate</button>
       <span id="status-msg" aria-live="polite"></span>
+      <span id="stats" class="stats"></span>
     </div>
   </div>
 
